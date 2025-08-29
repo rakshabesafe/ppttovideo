@@ -1,0 +1,136 @@
+version: '3.8'
+
+services:
+  postgres:
+    image: postgres:13
+    container_name: postgres
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-user}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-password}
+      POSTGRES_DB: ${POSTGRES_DB:-presentation_gen_db}
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    restart: unless-stopped
+
+  redis:
+    image: redis:6.2-alpine
+    container_name: redis
+    ports:
+      - "6379:6379"
+    restart: unless-stopped
+
+  minio:
+    image: minio/minio:latest
+    container_name: minio
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-minioadmin}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-minioadmin}
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    volumes:
+      - minio_data:/data
+    command: server /data --console-address ":9001"
+    restart: unless-stopped
+
+  create-minio-buckets:
+    image: minio/mc
+    container_name: create-minio-buckets
+    depends_on:
+      - minio
+    entrypoint: >
+      /bin/sh -c "
+      /usr/bin/mc config host add myminio http://minio:9000 ${MINIO_ROOT_USER:-minioadmin} ${MINIO_ROOT_PASSWORD:-minioadmin};
+      /usr/bin/mc mb myminio/ingest || true;
+      /usr/bin/mc mb myminio/output || true;
+      /usr/bin/mc mb myminio/voice-clones || true;
+      /usr/bin/mc mb myminio/presentations || true;
+      exit 0;
+      "
+    restart: on-failure
+
+  api:
+    build:
+      context: .
+      dockerfile: docker/api/Dockerfile
+    container_name: api
+    depends_on:
+      - postgres
+      - redis
+      - minio
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./app:/app
+    environment:
+      - DATABASE_URL=postgresql://${POSTGRES_USER:-user}:${POSTGRES_PASSWORD:-password}@postgres:5432/${POSTGRES_DB:-presentation_gen_db}
+      - CELERY_BROKER_URL=redis://redis:6379/0
+      - CELERY_RESULT_BACKEND=redis://redis:6379/0
+      - MINIO_URL=minio:9000
+      - MINIO_ACCESS_KEY=${MINIO_ROOT_USER:-minioadmin}
+      - MINIO_SECRET_KEY=${MINIO_ROOT_PASSWORD:-minioadmin}
+    restart: unless-stopped
+
+  worker_cpu:
+    build:
+      context: .
+      dockerfile: docker/worker_cpu/Dockerfile
+    container_name: worker_cpu
+    depends_on:
+      - redis
+      - minio
+      - libreoffice
+    volumes:
+      - ./app:/app
+    environment:
+      - CELERY_BROKER_URL=redis://redis:6379/0
+      - CELERY_RESULT_BACKEND=redis://redis:6379/0
+      - MINIO_URL=minio:9000
+      - MINIO_ACCESS_KEY=${MINIO_ROOT_USER:-minioadmin}
+      - MINIO_SECRET_KEY=${MINIO_ROOT_PASSWORD:-minioadmin}
+      - LIBREOFFICE_HOST=libreoffice
+    restart: unless-stopped
+
+  worker_gpu:
+    build:
+      context: .
+      dockerfile: docker/worker_gpu/Dockerfile
+    container_name: worker_gpu
+    depends_on:
+      - redis
+      - minio
+    volumes:
+      - ./app:/app
+    environment:
+      - CELERY_BROKER_URL=redis://redis:6379/0
+      - CELERY_RESULT_BACKEND=redis://redis:6379/0
+      - MINIO_URL=minio:9000
+      - MINIO_ACCESS_KEY=${MINIO_ROOT_USER:-minioadmin}
+      - MINIO_SECRET_KEY=${MINIO_ROOT_PASSWORD:-minioadmin}
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    restart: unless-stopped
+
+  libreoffice:
+    build:
+      context: .
+      dockerfile: docker/libreoffice/Dockerfile
+    container_name: libreoffice
+    ports:
+      - "8100:8100"
+    environment:
+      - MINIO_URL=minio:9000
+      - MINIO_ACCESS_KEY=${MINIO_ROOT_USER:-minioadmin}
+      - MINIO_SECRET_KEY=${MINIO_ROOT_PASSWORD:-minioadmin}
+    restart: unless-stopped
+
+volumes:
+  postgres_data:
+  minio_data:

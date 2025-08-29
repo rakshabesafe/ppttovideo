@@ -1,0 +1,36 @@
+# Web Framework
+fastapi
+uvicorn[standard]
+
+# Database
+sqlalchemy
+psycopg2-binary
+
+# Task Queue
+celery
+redis
+
+# Object Storage
+minio
+
+# Presentation & Video Processing
+python-pptx
+moviepy
+
+# Audio Processing
+librosa
+webrtcvad-wheels
+
+# AI / Voice Cloning
+# OpenVoice is installed directly from a git clone in the Dockerfile.
+# MeloTTS is a dependency for OpenVoice v2.
+-e git+https://github.com/myshell-ai/MeloTTS.git#egg=MeloTTS
+
+# Utilities
+python-dotenv
+requests
+pydantic
+pydantic-settings
+python-multipart
+Flask
+jinja2
