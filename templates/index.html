@@ -1,0 +1,244 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Presentation Video Generator</title>
+    <style>
+        body { font-family: sans-serif; line-height: 1.6; padding: 20px; max-width: 1000px; margin: auto; }
+        h1, h2 { border-bottom: 1px solid #ccc; padding-bottom: 10px; }
+        .container { display: flex; gap: 40px; }
+        .col { flex: 1; }
+        form { display: flex; flex-direction: column; gap: 10px; background: #f4f4f4; padding: 20px; border-radius: 5px; }
+        table { width: 100%; border-collapse: collapse; }
+        th, td { border: 1px solid #ddd; padding: 8px; text-align: left; }
+        th { background-color: #f2f2f2; }
+        .status-pending, .status-processing { color: orange; }
+        .status-completed { color: green; }
+        .status-failed { color: red; }
+        .hidden { display: none; }
+    </style>
+</head>
+<body>
+
+    <h1>Presentation Video Generator</h1>
+
+    <div class="container">
+        <div class="col">
+            <h2>Step 1: Create or Select User</h2>
+            <form id="user-form">
+                <label for="username">User Name:</label>
+                <input type="text" id="username" name="username" required>
+                <button type="submit">Create User</button>
+            </form>
+            <div id="user-info" class="hidden">
+                <h3>Current User: <span id="current-username"></span> (ID: <span id="current-user-id"></span>)</h3>
+            </div>
+
+            <div id="voice-clone-section" class="hidden">
+                <h2>Step 2: Manage Voice Clones</h2>
+                <form id="voice-clone-form" enctype="multipart/form-data">
+                    <label for="clone-name">New Clone Name:</label>
+                    <input type="text" id="clone-name" name="clone-name" required>
+                    <label for="wav-file">Reference WAV file:</label>
+                    <input type="file" id="wav-file" name="wav-file" accept=".wav" required>
+                    <button type="submit">Upload Voice Clone</button>
+                </form>
+                <h3>Existing Voice Clones:</h3>
+                <ul id="voice-clone-list"></ul>
+            </div>
+        </div>
+
+        <div class="col">
+            <div id="presentation-section" class="hidden">
+                <h2>Step 3: Create Presentation Video</h2>
+                <form id="presentation-form" enctype="multipart/form-data">
+                    <label for="pptx-file">PPTX file:</label>
+                    <input type="file" id="pptx-file" name="pptx-file" accept=".pptx" required>
+                    <label for="voice-clone-select">Select Voice Clone:</label>
+                    <select id="voice-clone-select" name="voice-clone-select" required></select>
+                    <button type="submit">Generate Video</button>
+                </form>
+            </div>
+        </div>
+    </div>
+
+    <hr>
+
+    <h2>Jobs Dashboard</h2>
+    <table id="jobs-table">
+        <thead>
+            <tr>
+                <th>Job ID</th>
+                <th>User ID</th>
+                <th>Status</th>
+                <th>Created At</th>
+                <th>Actions</th>
+            </tr>
+        </thead>
+        <tbody>
+            <!-- Job rows will be inserted here -->
+        </tbody>
+    </table>
+
+    <script>
+        const API_BASE_URL = "/api";
+        let currentUserId = null;
+
+        const userForm = document.getElementById('user-form');
+        const userInfo = document.getElementById('user-info');
+        const voiceCloneSection = document.getElementById('voice-clone-section');
+        const presentationSection = document.getElementById('presentation-section');
+
+        userForm.addEventListener('submit', async (e) => {
+            e.preventDefault();
+            const username = document.getElementById('username').value;
+            const response = await fetch(`${API_BASE_URL}/users/`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ name: username, email: `${username}@example.com` })
+            });
+
+            if (response.ok) {
+                const user = await response.json();
+                currentUserId = user.id;
+                document.getElementById('current-username').textContent = user.name;
+                document.getElementById('current-user-id').textContent = user.id;
+                userInfo.classList.remove('hidden');
+                voiceCloneSection.classList.remove('hidden');
+                presentationSection.classList.remove('hidden');
+                userForm.classList.add('hidden');
+                await loadVoiceClones();
+                await loadAllJobs();
+            } else {
+                alert("Failed to create user. Maybe the email is already in use.");
+            }
+        });
+
+        const voiceCloneForm = document.getElementById('voice-clone-form');
+        voiceCloneForm.addEventListener('submit', async (e) => {
+            e.preventDefault();
+            const formData = new FormData();
+            formData.append('name', document.getElementById('clone-name').value);
+            formData.append('owner_id', currentUserId);
+            formData.append('file', document.getElementById('wav-file').files[0]);
+
+            const response = await fetch(`${API_BASE_URL}/voice-clones/`, {
+                method: 'POST',
+                body: formData
+            });
+
+            if (response.ok) {
+                alert('Voice clone uploaded successfully!');
+                voiceCloneForm.reset();
+                await loadVoiceClones();
+            } else {
+                alert('Failed to upload voice clone.');
+            }
+        });
+
+        const presentationForm = document.getElementById('presentation-form');
+        presentationForm.addEventListener('submit', async (e) => {
+            e.preventDefault();
+            const formData = new FormData();
+            formData.append('owner_id', currentUserId);
+            formData.append('voice_clone_id', document.getElementById('voice-clone-select').value);
+            formData.append('file', document.getElementById('pptx-file').files[0]);
+
+            const response = await fetch(`${API_BASE_URL}/presentations/`, {
+                method: 'POST',
+                body: formData
+            });
+
+            if (response.ok) {
+                alert('Presentation job started!');
+                presentationForm.reset();
+                await loadAllJobs();
+            } else {
+                alert('Failed to start presentation job.');
+            }
+        });
+
+        async function loadVoiceClones() {
+            if (!currentUserId) return;
+            const response = await fetch(`${API_BASE_URL}/voice-clones/user/${currentUserId}`);
+            const clones = await response.json();
+
+            const list = document.getElementById('voice-clone-list');
+            const select = document.getElementById('voice-clone-select');
+            list.innerHTML = '';
+            select.innerHTML = '';
+
+            clones.forEach(clone => {
+                const listItem = document.createElement('li');
+                listItem.textContent = `${clone.name} (ID: ${clone.id})`;
+                list.appendChild(listItem);
+
+                const optionItem = document.createElement('option');
+                optionItem.value = clone.id;
+                optionItem.textContent = `${clone.name} (ID: ${clone.id})`;
+                select.appendChild(optionItem);
+            });
+        }
+
+        async function loadAllJobs() {
+             // For the MVP, we load all jobs, not just for the current user
+            const response = await fetch(`${API_BASE_URL}/presentations/status/all`); // This endpoint doesn't exist yet, I'll need to add it
+            if(!response.ok) return;
+            const jobs = await response.json();
+            const tbody = document.querySelector('#jobs-table tbody');
+            tbody.innerHTML = '';
+            jobs.forEach(job => addJobRow(job));
+        }
+
+        function addJobRow(job) {
+            const tbody = document.querySelector('#jobs-table tbody');
+            const row = document.createElement('tr');
+            row.id = `job-${job.id}`;
+            row.innerHTML = `
+                <td>${job.id}</td>
+                <td>${job.owner_id}</td>
+                <td class="status-${job.status}">${job.status}</td>
+                <td>${new Date(job.created_at).toLocaleString()}</td>
+                <td id="action-${job.id}">
+                    ${job.status === 'completed' ? `<a href="/api/presentations/download/${job.id}" target="_blank">Download</a>` : 'Processing...'}
+                </td>
+            `;
+            tbody.prepend(row);
+        }
+
+        function updateJobStatus(job) {
+            const row = document.getElementById(`job-${job.id}`);
+            if (row) {
+                row.querySelector('td:nth-child(3)').textContent = job.status;
+                row.querySelector('td:nth-child(3)').className = `status-${job.status}`;
+                if (job.status === 'completed') {
+                    document.getElementById(`action-${job.id}`).innerHTML = `<a href="/api/presentations/download/${job.id}" target="_blank">Download</a>`;
+                }
+            } else {
+                addJobRow(job);
+            }
+        }
+
+        // I need to add an endpoint to get all jobs. And a download endpoint.
+        // Let's assume I will add GET /api/presentations/status/all
+        // And GET /api/presentations/download/{job_id}
+        // I will add these to presentations.py next.
+
+        setInterval(async () => {
+            const rows = document.querySelectorAll('#jobs-table tbody tr');
+            rows.forEach(async row => {
+                const statusCell = row.querySelector('td:nth-child(3)');
+                if (statusCell.textContent !== 'completed' && statusCell.textContent !== 'failed') {
+                    const jobId = row.id.split('-')[1];
+                    const response = await fetch(`${API_BASE_URL}/presentations/status/${jobId}`);
+                    if (response.ok) {
+                        const job = await response.json();
+                        updateJobStatus(job);
+                    }
+                }
+            });
+        }, 5000); // Poll every 5 seconds
+
+    </script>
+</body>
+</html>
