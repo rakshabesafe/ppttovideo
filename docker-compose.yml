@@ -55,6 +55,7 @@ services:
     build:
       context: .
       dockerfile: docker/api/Dockerfile
+    image: ppt-api
     container_name: api
     depends_on:
       - postgres
@@ -77,6 +78,7 @@ services:
     build:
       context: .
       dockerfile: docker/worker_cpu/Dockerfile
+    image: ppt-worker-cpu
     container_name: worker_cpu
     depends_on:
       - redis
@@ -97,6 +99,7 @@ services:
     build:
       context: .
       dockerfile: docker/worker_gpu/Dockerfile
+    image: ppt-worker-gpu
     container_name: worker_gpu
     depends_on:
       - redis
@@ -122,6 +125,7 @@ services:
     build:
       context: .
       dockerfile: docker/libreoffice/Dockerfile
+    image: ppt-libreoffice
     container_name: libreoffice
     ports:
       - "8100:8100"

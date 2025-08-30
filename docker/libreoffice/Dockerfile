@@ -1,12 +1,11 @@
 # Use a stable Debian image
-FROM debian:buster
+FROM debian:bullseye
 
 # Install LibreOffice and other dependencies
 RUN apt-get update && apt-get install -y \
     libreoffice-writer \
     libreoffice-impress \
     libreoffice-calc \
-    libreoffice-headless \
     poppler-utils \
     python3-pip \
     --no-install-recommends \
