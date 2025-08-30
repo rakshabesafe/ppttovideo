@@ -1,7 +1,7 @@
 # Use a base image with CUDA and PyTorch pre-installed
 FROM pytorch/pytorch:2.1.0-cuda12.1-cudnn8-runtime
 
-WORKDIR /app
+WORKDIR /
 
 # Install system dependencies
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -31,4 +31,4 @@ RUN curl -L -o checkpoints_v2.zip "https://myshell-public-repo-host.s3.amazonaws
 COPY ./app /app
 
 # Command to run the Celery worker for GPU tasks
-CMD ["celery", "-A", "workers.celery_app:app", "worker", "--loglevel=info", "-Q", "gpu_tasks", "-c", "1"]
+CMD ["celery", "-A", "app.workers.celery_app:app", "worker", "--loglevel=info", "-Q", "gpu_tasks", "-c", "1"]
