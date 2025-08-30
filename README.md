@@ -60,3 +60,4 @@ The application is built with a microservices architecture, orchestrated by Dock
     -   **MinIO Console**: You can access the MinIO dashboard at [http://localhost:19001](http://localhost:19001) using the credentials from your `.env` file.
     -   **Database**: The PostgreSQL database is exposed on `localhost:15432`.
     -   **Redis**: The Redis server is exposed on `localhost:16379`.
+    -   **LibreOffice**: The LibreOffice service is exposed on `localhost:18100`.

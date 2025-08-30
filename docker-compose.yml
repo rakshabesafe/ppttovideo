@@ -56,7 +56,7 @@ services:
       context: .
       dockerfile: docker/api/Dockerfile
     image: ppt-api
-    container_name: api
+    container_name: ppt-api
     depends_on:
       - postgres
       - redis
@@ -79,7 +79,7 @@ services:
       context: .
       dockerfile: docker/worker_cpu/Dockerfile
     image: ppt-worker-cpu
-    container_name: worker_cpu
+    container_name: ppt-worker_cpu
     depends_on:
       - redis
       - minio
@@ -100,7 +100,7 @@ services:
       context: .
       dockerfile: docker/worker_gpu/Dockerfile
     image: ppt-worker-gpu
-    container_name: worker_gpu
+    container_name: ppt-worker_gpu
     depends_on:
       - redis
       - minio
@@ -126,9 +126,9 @@ services:
       context: .
       dockerfile: docker/libreoffice/Dockerfile
     image: ppt-libreoffice
-    container_name: libreoffice
+    container_name: ppt-libreoffice
     ports:
-      - "8100:8100"
+      - "18100:8100"
     environment:
       - MINIO_URL=minio:9000
       - MINIO_ACCESS_KEY=${MINIO_ROOT_USER:-minioadmin}
