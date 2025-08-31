@@ -1,6 +1,6 @@
 from app.workers.celery_app import app as celery_app
 from app.db.session import SessionLocal
-from app. import crud
+from app import crud
 from app.services.minio_service import minio_service
 from pptx import Presentation
 import requests
