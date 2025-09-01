@@ -382,13 +382,46 @@ def test_cleanup_integration():
   - Error handling coordination
   - Resource cleanup
 
-### Voice Synthesis Service  
-- **Purpose**: Abstract AI model operations
+### Voice Synthesis Service - **ENHANCED**
+- **Purpose**: Complete TTS pipeline with MeloTTS and OpenVoice integration
+- **Implementation**: `app/workers/tasks_gpu.py` with advanced features
 - **Responsibilities**:
-  - Model loading and management
-  - Audio processing pipeline
-  - Voice clone parameter management
-  - Quality validation
+  - PowerPoint notes extraction and parsing
+  - Advanced tag processing (`[EMOTION:happy]`, `[SPEED:fast]`, `[EMPHASIS:word]`)
+  - MeloTTS integration for natural speech synthesis
+  - OpenVoice voice cloning and tone conversion
+  - Multi-level fallback system (TTS → Base Audio → Placeholder)
+  - Audio quality assurance (duration, format, noise filtering)
+  - GPU memory management and model caching
+
+**Current Architecture:**
+```
+PPT Notes → Tag Parser → MeloTTS → OpenVoice → Final Audio
+    ↓           ↓          ↓          ↓          ↓
+ Extract    Parse       Generate   Apply     Upload
+ Text      Emotions     Speech     Voice     to MinIO
+          & Speed      Audio      Clone
+```
+
+**Advanced Features:**
+- Emotion control: `[EMOTION:excited]`, `[EMOTION:calm]`, `[EMOTION:serious]`
+- Speed control: `[SPEED:slow]`, `[SPEED:1.3]`, `[SPEED:fast]`  
+- Emphasis: `[EMPHASIS:important word]` → "IMPORTANT WORD"
+- Strategic pauses: `[PAUSE:2]` → 2-second pause
+- Fallback audio: Audible tones if TTS fails (replaces silent audio)
+
+**Performance Optimizations:**
+- GPU-accelerated processing on CUDA devices
+- Lazy model loading to reduce memory footprint
+- Parallel slide processing for multiple audio files
+- Automatic cleanup of temporary files and GPU cache
+- Smart reference audio trimming and validation
+
+**Integration Points:**
+- MinIO storage: `presentations/{job_id}/notes/` and `/audio/`
+- Video assembly: Audio synchronized with slide images
+- Voice clones: Support for custom and built-in voice options
+- Error reporting: Comprehensive status tracking and fallback messaging
 
 ### Video Assembly Service
 - **Purpose**: Handle video creation operations

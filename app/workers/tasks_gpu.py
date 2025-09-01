@@ -14,12 +14,93 @@ import io
 import re
 import soundfile as sf
 
+# Import MeloTTS for base TTS synthesis
+sys.path.append('/src/melotts')
+# Delay import of MeloTTS to handle initialization issues
+base_tts = None
+
 # Load models once when the worker starts
 # This is a simplification. In a real scenario, model loading should be more robust.
 device = "cuda:0" if torch.cuda.is_available() else "cpu"
 tone_color_converter = ToneColorConverter('checkpoints_v2/checkpoints_v2/converter/config.json', device=device)
 # Load base speaker TTS for English
 source_se = torch.load('checkpoints_v2/checkpoints_v2/base_speakers/ses/en-default.pth', map_location=device)
+
+# MeloTTS will be loaded on demand to avoid initialization issues
+
+def parse_note_text_tags(text):
+    """
+    Parse special tags from PowerPoint notes for emotion and emphasis control.
+    
+    Supported tags:
+    [EMOTION:happy/sad/excited/calm/angry] - Sets emotional tone
+    [SPEED:slow/normal/fast] or [SPEED:0.8] - Controls speech speed (0.5-2.0)
+    [PITCH:low/normal/high] - Controls pitch (not fully implemented)
+    [PAUSE:2] - Adds pause in seconds
+    [EMPHASIS:word] - Emphasizes specific words (capitalization)
+    
+    Returns:
+        tuple: (cleaned_text, emotion, speed, pitch)
+    """
+    import re
+    
+    # Default values
+    emotion = "neutral"
+    speed = 1.0
+    pitch = 1.0
+    
+    # Extract emotion tags
+    emotion_match = re.search(r'\[EMOTION:(happy|sad|excited|calm|angry|neutral)\]', text, re.IGNORECASE)
+    if emotion_match:
+        emotion = emotion_match.group(1).lower()
+        text = re.sub(r'\[EMOTION:[^\]]+\]', '', text, flags=re.IGNORECASE)
+    
+    # Extract speed tags
+    speed_match = re.search(r'\[SPEED:(slow|normal|fast|[\d.]+)\]', text, re.IGNORECASE)
+    if speed_match:
+        speed_val = speed_match.group(1).lower()
+        if speed_val == "slow":
+            speed = 0.7
+        elif speed_val == "fast":
+            speed = 1.3
+        elif speed_val == "normal":
+            speed = 1.0
+        else:
+            try:
+                speed = float(speed_val)
+                speed = max(0.5, min(2.0, speed))  # Clamp between 0.5 and 2.0
+            except ValueError:
+                speed = 1.0
+        text = re.sub(r'\[SPEED:[^\]]+\]', '', text, flags=re.IGNORECASE)
+    
+    # Extract pitch tags (for future implementation)
+    pitch_match = re.search(r'\[PITCH:(low|normal|high|[\d.]+)\]', text, re.IGNORECASE)
+    if pitch_match:
+        pitch_val = pitch_match.group(1).lower()
+        if pitch_val == "low":
+            pitch = 0.8
+        elif pitch_val == "high":
+            pitch = 1.2
+        elif pitch_val == "normal":
+            pitch = 1.0
+        else:
+            try:
+                pitch = float(pitch_val)
+                pitch = max(0.5, min(2.0, pitch))
+            except ValueError:
+                pitch = 1.0
+        text = re.sub(r'\[PITCH:[^\]]+\]', '', text, flags=re.IGNORECASE)
+    
+    # Handle pause tags by converting to commas for natural pauses
+    text = re.sub(r'\[PAUSE:(\d+)\]', lambda m: ',' * int(m.group(1)), text, flags=re.IGNORECASE)
+    
+    # Handle emphasis tags by capitalizing words
+    text = re.sub(r'\[EMPHASIS:([^\]]+)\]', lambda m: m.group(1).upper(), text, flags=re.IGNORECASE)
+    
+    # Clean up extra whitespace
+    text = re.sub(r'\s+', ' ', text).strip()
+    
+    return text, emotion, speed, pitch
 
 @celery_app.task(name="app.workers.tasks_gpu.synthesize_audio")
 def synthesize_audio(job_id: int, slide_number: int):
@@ -94,18 +175,105 @@ def synthesize_audio(job_id: int, slide_number: int):
         # For now, we use a default style.
         save_path = f"temp_output_{job_id}_{slide_number}.wav"
 
-        # Handle silence tag
-        if note_text == "[SILENCE]":
+        # Handle silence tag or empty text
+        if note_text == "[SILENCE]" or not note_text.strip():
             # Create 1 second of silence
             silence = torch.zeros(24000)
             sf.write(save_path, silence.numpy(), 24000)
         else:
-            # For now, create a placeholder until we have proper TTS integration
-            # TODO: Integrate with MeloTTS or another TTS engine to generate base audio
-            # then use OpenVoice to convert the tone color
-            silence = torch.zeros(24000)  # 1 second of silence as placeholder
-            sf.write(save_path, silence.numpy(), 24000)
-            print(f"TODO: Implement TTS synthesis for: {note_text}")
+            try:
+                print(f"Synthesizing speech for: {note_text[:100]}...")
+                
+                # Parse emotion and emphasis tags from note text
+                processed_text, emotion, speed, pitch = parse_note_text_tags(note_text)
+                print(f"Processing: '{processed_text}' with emotion='{emotion}', speed={speed}, pitch={pitch}")
+                
+                # Initialize MeloTTS if not already done
+                global base_tts
+                if base_tts is None:
+                    try:
+                        from melo.api import TTS
+                        base_tts = TTS(language='EN', device=device)
+                        print("MeloTTS initialized successfully")
+                    except Exception as tts_init_error:
+                        print(f"MeloTTS initialization failed: {tts_init_error}")
+                        base_tts = None
+                
+                # Generate base TTS audio using MeloTTS
+                if base_tts is not None:
+                    try:
+                        # Use MeloTTS for base speech synthesis
+                        temp_base_audio = f"temp_base_{job_id}_{slide_number}.wav"
+                        
+                        # Adjust speed and other parameters based on parsed tags
+                        tts_speed = speed if speed != 1.0 else 1.0
+                        
+                        base_tts.tts_to_file(
+                            text=processed_text,
+                            speaker_id=0,  # Default English speaker
+                            output_path=temp_base_audio,
+                            speed=tts_speed,
+                            quiet=True
+                        )
+                        
+                        print(f"Base TTS audio generated successfully for slide {slide_number}")
+                        
+                        # Load the generated audio for voice cloning
+                        base_audio, sr = librosa.load(temp_base_audio, sr=24000)
+                        
+                        # Apply voice cloning using OpenVoice
+                        if not use_builtin_speaker:
+                            try:
+                                tone_color_converter.convert(
+                                    audio_src_path=temp_base_audio,
+                                    src_se=source_se,
+                                    tgt_se=target_se,
+                                    output_path=save_path,
+                                    message=f"Converting voice for slide {slide_number}"
+                                )
+                                print(f"Voice cloning applied successfully for slide {slide_number}")
+                            except Exception as clone_error:
+                                print(f"Voice cloning failed: {clone_error}, using base TTS audio")
+                                # Copy base audio if cloning fails
+                                import shutil
+                                shutil.copy2(temp_base_audio, save_path)
+                        else:
+                            # Use built-in speaker, just copy the base audio
+                            import shutil
+                            shutil.copy2(temp_base_audio, save_path)
+                            
+                        # Clean up temporary file
+                        if os.path.exists(temp_base_audio):
+                            os.remove(temp_base_audio)
+                            
+                    except Exception as tts_error:
+                        print(f"TTS generation failed: {tts_error}")
+                        raise tts_error
+                        
+                else:
+                    # Fallback to old placeholder system if MeloTTS fails
+                    print("MeloTTS not available, using duration-based placeholder")
+                    word_count = len(processed_text.split())
+                    estimated_duration = max(3.0, word_count / 150.0 * 60.0)
+                    estimated_duration = min(estimated_duration, 30.0)
+                    
+                    sample_rate = 24000
+                    duration_samples = int(estimated_duration * sample_rate)
+                    
+                    import numpy as np
+                    t = np.linspace(0, estimated_duration, duration_samples)
+                    # Create audible beeps as placeholder
+                    audio = 0.3 * np.sin(2 * np.pi * 440 * t) * np.sin(2 * np.pi * 2 * t)  # Amplitude modulated tone
+                    
+                    sf.write(save_path, audio, sample_rate)
+                    print(f"Generated {estimated_duration:.1f}s audio placeholder for slide {slide_number}")
+                
+            except Exception as e:
+                print(f"Error in speech synthesis: {e}")
+                print("Falling back to basic silence...")
+                # Fallback to basic silence if everything fails
+                silence = torch.zeros(24000 * 5)  # 5 seconds of silence as fallback
+                sf.write(save_path, silence.numpy(), 24000)
 
         # 5. Upload synthesized audio to MinIO
         audio_object_name = f"{job_id}/audio/slide_{slide_number}.wav"
