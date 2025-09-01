@@ -59,6 +59,36 @@ def update_job_status(db: Session, job_id: int, status: str, video_path: str = N
         db.refresh(db_job)
     return db_job
 
+def get_presentation_jobs_by_status(db: Session, statuses: list, skip: int = 0, limit: int = 100):
+    """Get presentation jobs by status list"""
+    return db.query(models.PresentationJob).filter(
+        models.PresentationJob.status.in_(statuses)
+    ).offset(skip).limit(limit).all()
+
+def get_old_presentation_jobs(db: Session, cutoff_date, statuses: list = None):
+    """Get presentation jobs older than cutoff_date"""
+    query = db.query(models.PresentationJob).filter(
+        models.PresentationJob.created_at < cutoff_date
+    )
+    
+    if statuses:
+        query = query.filter(models.PresentationJob.status.in_(statuses))
+    
+    return query.all()
+
+def delete_presentation_job(db: Session, job_id: int):
+    """Delete a presentation job"""
+    job = get_presentation_job(db, job_id)
+    if job:
+        db.delete(job)
+        db.commit()
+        return True
+    return False
+
+def get_all_presentation_jobs(db: Session, skip: int = 0, limit: int = 100):
+    """Get all presentation jobs"""
+    return db.query(models.PresentationJob).offset(skip).limit(limit).all()
+
 def create_default_voice_clones(db: Session):
     """Create default voice clones using OpenVoice built-in speakers"""
     default_voices = [

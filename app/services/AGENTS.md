@@ -12,6 +12,8 @@ The Services module provides abstraction layers for external service integration
 
 #### Responsibilities
 - File upload operations to various buckets
+- File download and deletion operations
+- Object listing and management
 - Connection management with MinIO server
 - Path generation for stored objects
 - Error handling for storage operations
@@ -293,6 +295,81 @@ def test_convert_endpoint_success():
             
             assert response.status_code == 200
             assert len(response.json["image_paths"]) == 2
+```
+
+### Cleanup Service (`cleanup_service.py`) - **NEW**
+- **Agent Type**: Resource Management & Cleanup
+- **Purpose**: Manage application storage and clean up old jobs
+- **External Services**: MinIO, PostgreSQL
+
+#### Responsibilities
+- **Job Lifecycle Management**: Remove old jobs and associated metadata
+- **File Cleanup**: Delete PPTX files, images, audio clips, notes, and videos
+- **Storage Optimization**: Free up disk space by removing temporary files
+- **Flexible Filtering**: Clean by age, status, or specific job IDs
+- **Preview Mode**: Show what would be cleaned before execution
+- **Statistics**: Provide storage analytics and cleanup metrics
+
+#### Current Implementation
+```python
+class CleanupService:
+    def __init__(self):
+        self.minio_client = minio_service.client
+    
+    def cleanup_old_jobs(self, days_old: int, status_filter: List[str]) -> dict:
+        # Removes jobs older than specified days
+        
+    def cleanup_specific_jobs(self, job_ids: List[int]) -> dict:
+        # Removes specific jobs by ID
+        
+    def get_cleanup_preview(self, days_old: int, status_filter: List[str]) -> dict:
+        # Preview what would be cleaned
+        
+    def _cleanup_single_job(self, db: Session, job: PresentationJob) -> dict:
+        # Clean individual job and all associated files
+```
+
+#### File Cleanup Strategy
+1. **Original PPTX files**: `/ingest/{uuid}.pptx`
+2. **Generated images**: `/presentations/{uuid}/images/slide-*.png`
+3. **Audio files**: `/presentations/{job_id}/audio/slide_*.wav`
+4. **Notes files**: `/presentations/{job_id}/notes/slide_*.txt`
+5. **Final videos**: `/output/{job_id}.mp4`
+6. **Database records**: Job entries in `presentation_jobs` table
+
+#### API Integration
+```python
+# Cleanup API endpoints
+GET  /api/cleanup/preview        # Preview cleanup
+POST /api/cleanup/execute        # Execute cleanup by age/status
+POST /api/cleanup/specific-jobs  # Cleanup specific jobs
+GET  /api/cleanup/stats          # Get cleanup statistics
+GET  /api/cleanup/job-statuses   # List available job statuses
+```
+
+#### CLI Integration
+```bash
+# Command-line interface for automation
+python -m app.cli.cleanup_jobs --preview --days 7
+python -m app.cli.cleanup_jobs --execute --days 30 --status failed
+python -m app.cli.cleanup_jobs --specific-jobs 1,2,3,4,5
+python -m app.cli.cleanup_jobs --stats --format json
+```
+
+#### Testing Strategy
+```python
+# Unit tests with mocked dependencies
+def test_cleanup_single_job():
+    cleanup_service = CleanupService()
+    with patch.object(cleanup_service, '_delete_s3_file_safe') as mock_delete:
+        result = cleanup_service._cleanup_single_job(mock_db, mock_job)
+        assert result['files_deleted'] > 0
+
+# Integration tests with real MinIO
+def test_cleanup_integration():
+    # Test with actual MinIO instance
+    result = cleanup_service.cleanup_specific_jobs([test_job_id])
+    assert result['jobs_deleted'] == 1
 ```
 
 ## Missing Services (Opportunities for Extraction)
