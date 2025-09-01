@@ -12,15 +12,15 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     unzip \
     && rm -rf /var/lib/apt/lists/*
 
-# Install OpenVoice and its dependencies
-RUN git clone https://github.com/myshell-ai/OpenVoice.git /app/OpenVoice
+# Copy requirements.txt first
 COPY requirements.txt .
 # Install MeloTTS from git and other requirements
 RUN pip install --no-cache-dir -r requirements.txt
+
+# Install OpenVoice and its dependencies  
+RUN git clone https://github.com/myshell-ai/OpenVoice.git /OpenVoice
 # Install OpenVoice from the cloned repo
-RUN cd /app/OpenVoice && pip install -e .
-# Download dictionary for Japanese tokenization
-RUN python -m unidic download
+RUN cd /OpenVoice && pip install -e .
 
 # Download and extract OpenVoice V2 checkpoints
 RUN curl -L -o checkpoints_v2.zip "https://myshell-public-repo-host.s3.amazonaws.com/openvoice/checkpoints_v2_0417.zip" && \
@@ -30,5 +30,8 @@ RUN curl -L -o checkpoints_v2.zip "https://myshell-public-repo-host.s3.amazonaws
 # Copy application code
 COPY ./app /app
 
+# Set PYTHONPATH to include OpenVoice directory
+ENV PYTHONPATH="${PYTHONPATH}:/OpenVoice"
+
 # Command to run the Celery worker for GPU tasks
-CMD ["celery", "-A", "app.workers.celery_app:app", "worker", "--loglevel=info", "-Q", "gpu_tasks", "-c", "1"]
+CMD ["celery", "-A", "app.workers.celery_app_gpu:app", "worker", "--loglevel=info", "-Q", "gpu_tasks", "-c", "1"]

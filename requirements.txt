@@ -20,6 +20,7 @@ moviepy
 # Audio Processing
 librosa
 webrtcvad-wheels
+soundfile
 
 # AI / Voice Cloning
 # OpenVoice is installed directly from a git clone in the Dockerfile.

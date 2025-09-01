@@ -1,0 +1,20 @@
+# Optimized GPU worker using pre-built base
+FROM ppttovideo-gpu-base:latest
+
+WORKDIR /
+
+# Only install remaining lightweight dependencies
+COPY requirements.txt .
+RUN pip install --no-cache-dir \
+    fastapi uvicorn[standard] \
+    sqlalchemy psycopg2-binary \
+    minio python-pptx moviepy \
+    python-dotenv requests pydantic \
+    pydantic-settings python-multipart \
+    Flask jinja2
+
+# Copy application code (only thing that changes frequently)
+COPY ./app /app
+
+# Command to run the Celery worker for GPU tasks
+CMD ["celery", "-A", "app.workers.celery_app:app", "worker", "--loglevel=info", "-Q", "gpu_tasks", "-c", "1"]

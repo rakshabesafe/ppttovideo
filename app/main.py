@@ -9,7 +9,7 @@ models.Base.metadata.create_all(bind=engine)
 
 app = FastAPI(title="Presentation Video Generator API")
 
-templates = Jinja2Templates(directory="templates")
+templates = Jinja2Templates(directory="/templates")
 
 # Include API routers
 app.include_router(users.router, prefix="/api/users", tags=["users"])

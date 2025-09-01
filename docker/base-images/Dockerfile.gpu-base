@@ -1,0 +1,33 @@
+# Base image for GPU worker with PyTorch and CUDA pre-installed
+FROM pytorch/pytorch:2.1.0-cuda12.1-cudnn8-runtime
+
+WORKDIR /
+
+# Install system dependencies
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential \
+    libsndfile1 \
+    git \
+    curl \
+    unzip \
+    && rm -rf /var/lib/apt/lists/*
+
+# Pre-install heavy dependencies to create cached layer
+COPY requirements.txt .
+RUN pip install --no-cache-dir \
+    torch torchvision torchaudio \
+    librosa webrtcvad-wheels soundfile \
+    celery redis
+
+# Install OpenVoice and MeloTTS (heavy downloads)
+RUN git clone https://github.com/myshell-ai/OpenVoice.git /app/OpenVoice
+RUN pip install --no-cache-dir -e git+https://github.com/myshell-ai/MeloTTS.git#egg=MeloTTS
+RUN cd /app/OpenVoice && pip install -e .
+
+# Download OpenVoice checkpoints once
+RUN curl -L -o checkpoints_v2.zip "https://myshell-public-repo-host.s3.amazonaws.com/openvoice/checkpoints_v2_0417.zip" && \
+    unzip checkpoints_v2.zip -d checkpoints_v2 && \
+    rm checkpoints_v2.zip
+
+# This base image contains all heavy dependencies
+# Total size: ~8-10GB but built once and reused
