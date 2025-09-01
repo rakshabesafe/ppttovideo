@@ -16,6 +16,10 @@
         .status-completed { color: green; }
         .status-failed { color: red; }
         .hidden { display: none; }
+        .cleanup-section { margin: 20px 0; padding: 15px; background: #fff3cd; border: 1px solid #ffeaa7; border-radius: 5px; }
+        .cleanup-btn { background: #dc3545; color: white; border: none; padding: 10px 20px; border-radius: 5px; cursor: pointer; font-size: 14px; }
+        .cleanup-btn:hover { background: #c82333; }
+        .cleanup-btn:disabled { background: #6c757d; cursor: not-allowed; }
     </style>
 </head>
 <body>
@@ -79,6 +83,14 @@
     <hr>
 
     <h2>Jobs Dashboard</h2>
+    
+    <div class="cleanup-section">
+        <h3>🧹 Cleanup Jobs</h3>
+        <p>Remove old completed and failed jobs along with their associated files (images, audio, videos).</p>
+        <button id="cleanup-btn" class="cleanup-btn">Clean All Jobs</button>
+        <span id="cleanup-status" style="margin-left: 15px; font-weight: bold;"></span>
+    </div>
+    
     <table id="jobs-table">
         <thead>
             <tr>
@@ -274,6 +286,85 @@
         // Let's assume I will add GET /api/presentations/status/all
         // And GET /api/presentations/download/{job_id}
         // I will add these to presentations.py next.
+
+        // Cleanup functionality
+        document.getElementById('cleanup-btn').addEventListener('click', async () => {
+            const cleanupBtn = document.getElementById('cleanup-btn');
+            const cleanupStatus = document.getElementById('cleanup-status');
+            
+            // Confirmation dialog
+            const confirmed = confirm(
+                'Are you sure you want to clean up all completed and failed jobs?\n\n' +
+                'This will permanently delete:\n' +
+                '• Job records from database\n' +
+                '• Original PowerPoint files\n' +
+                '• Generated slide images\n' +
+                '• Synthesized audio files\n' +
+                '• Final video files\n\n' +
+                'This action cannot be undone!'
+            );
+            
+            if (!confirmed) return;
+            
+            // Disable button and show loading
+            cleanupBtn.disabled = true;
+            cleanupBtn.textContent = 'Cleaning...';
+            cleanupStatus.textContent = '🔄 Processing cleanup...';
+            cleanupStatus.style.color = 'orange';
+            
+            try {
+                // First get preview to show what will be cleaned
+                const previewResponse = await fetch(`${API_BASE_URL}/cleanup/preview?days_old=0`);
+                if (previewResponse.ok) {
+                    const previewData = await previewResponse.json();
+                    console.log('Cleanup preview:', previewData);
+                    
+                    if (previewData.preview.jobs_count === 0) {
+                        cleanupStatus.textContent = '✅ No jobs to clean up';
+                        cleanupStatus.style.color = 'green';
+                        cleanupBtn.disabled = false;
+                        cleanupBtn.textContent = 'Clean All Jobs';
+                        return;
+                    }
+                }
+                
+                // Execute cleanup
+                const response = await fetch(`${API_BASE_URL}/cleanup/execute`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        days_old: 0,  // Clean all jobs regardless of age
+                        status_filter: ['completed', 'failed']
+                    })
+                });
+                
+                if (response.ok) {
+                    const result = await response.json();
+                    cleanupStatus.textContent = `✅ ${result.message}`;
+                    cleanupStatus.style.color = 'green';
+                    
+                    // Refresh the jobs table
+                    await loadAllJobs();
+                } else {
+                    const error = await response.json();
+                    cleanupStatus.textContent = `❌ Cleanup failed: ${error.detail}`;
+                    cleanupStatus.style.color = 'red';
+                }
+            } catch (error) {
+                console.error('Cleanup error:', error);
+                cleanupStatus.textContent = `❌ Cleanup failed: ${error.message}`;
+                cleanupStatus.style.color = 'red';
+            } finally {
+                // Re-enable button
+                cleanupBtn.disabled = false;
+                cleanupBtn.textContent = 'Clean All Jobs';
+                
+                // Clear status after 5 seconds
+                setTimeout(() => {
+                    cleanupStatus.textContent = '';
+                }, 5000);
+            }
+        });
 
         setInterval(async () => {
             const rows = document.querySelectorAll('#jobs-table tbody tr');

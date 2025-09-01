@@ -63,8 +63,8 @@ async def execute_cleanup(request: CleanupRequest):
         dict: Summary of cleanup results
     """
     try:
-        if request.days_old < 1:
-            raise HTTPException(status_code=400, detail="days_old must be at least 1")
+        if request.days_old < 0:
+            raise HTTPException(status_code=400, detail="days_old must be at least 0")
         
         # Default status filter if not provided
         status_filter = request.status_filter or ['completed', 'failed']
