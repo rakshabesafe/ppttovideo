@@ -14,6 +14,9 @@ Transform your PowerPoint presentations into engaging narrated videos using AI-p
 - **📱 Web Interface**: Easy-to-use browser-based application
 - **⚡ Async Processing**: Background job processing with real-time status updates
 - **📈 Jobs Dashboard**: Monitor processing status and download completed videos
+- **🧹 Cleanup Management**: Automated cleanup of old jobs and temporary files
+- **📊 Storage Analytics**: Track disk usage and cleanup statistics
+- **🔧 CLI Tools**: Command-line utilities for batch operations and automation
 
 ## Architecture
 
@@ -63,6 +66,7 @@ docker-compose up --build
    - **🌐 Main App**: [http://localhost:18000](http://localhost:18000)
    - **📚 API Docs**: [http://localhost:18000/docs](http://localhost:18000/docs)
    - **🗄️ MinIO Console**: [http://localhost:19001](http://localhost:19001)
+   - **🧹 Cleanup API**: [http://localhost:18000/api/cleanup](http://localhost:18000/api/cleanup)
 
 ## 📖 How to Use
 
@@ -93,6 +97,43 @@ docker-compose up --build
 ### Step 4: Download Result
 - Processing takes 2-10 minutes
 - Click **"Download"** when status shows **"completed"**
+
+### Step 5: Cleanup (Optional)
+Keep your system clean with built-in cleanup tools:
+
+**Via Web Interface:**
+- Visit [http://localhost:18000/api/cleanup/stats](http://localhost:18000/api/cleanup/stats) for storage statistics
+
+**Via API:**
+```bash
+# Preview cleanup (jobs older than 7 days)
+curl "http://localhost:18000/api/cleanup/preview?days_old=7"
+
+# Execute cleanup of old failed jobs
+curl -X POST "http://localhost:18000/api/cleanup/execute" \
+  -H "Content-Type: application/json" \
+  -d '{"days_old": 30, "status_filter": ["failed"]}'
+
+# Cleanup specific jobs
+curl -X POST "http://localhost:18000/api/cleanup/specific-jobs" \
+  -H "Content-Type: application/json" \
+  -d '{"job_ids": [1, 2, 3]}'
+```
+
+**Via CLI:**
+```bash
+# Preview cleanup
+docker exec ppt-api python -m app.cli.cleanup_jobs --preview --days 7
+
+# Execute cleanup with confirmation
+docker exec ppt-api python -m app.cli.cleanup_jobs --execute --days 30
+
+# Cleanup specific jobs
+docker exec ppt-api python -m app.cli.cleanup_jobs --specific-jobs 1,2,3,4,5
+
+# View cleanup statistics
+docker exec ppt-api python -m app.cli.cleanup_jobs --stats
+```
 
 ## 🏗️ System Architecture
 
@@ -173,6 +214,7 @@ docker-compose up --build
 - Check LibreOffice service: `docker-compose logs libreoffice`
 
 **❌ Out of storage**
+- Use cleanup API: `curl -X POST "http://localhost:18000/api/cleanup/execute" -d '{"days_old": 7}'`
 - Clean Docker: `docker system prune -f`
 - Check MinIO console: http://localhost:19001
 - Free up host disk space
@@ -247,6 +289,23 @@ SELECT id, status, created_at FROM presentation_jobs ORDER BY created_at DESC;
 This project is licensed under the MIT License.
 
 ## 🆕 Recent Updates
+
+### v2.2.0 - Cleanup & Management Features
+- ✅ **Cleanup Service**: Automated cleanup of old jobs and associated files
+  - Remove jobs by age (configurable days old)
+  - Filter by job status (completed, failed, etc.)
+  - Clean up specific jobs by ID
+  - Removes PPTX files, images, audio, notes, and videos
+- ✅ **Cleanup API**: RESTful endpoints for cleanup operations
+  - Preview what will be cleaned before execution
+  - Get cleanup statistics and storage analytics
+  - Execute cleanup with flexible filtering
+- ✅ **CLI Tools**: Command-line utilities for automation
+  - Preview and execute cleanup operations
+  - JSON and text output formats
+  - Perfect for cron jobs and batch operations
+- ✅ **Storage Management**: Track disk usage and optimize storage
+- ✅ **MoviePy Compatibility**: Fixed video generation with latest MoviePy API
 
 ### v2.1.0 - Enhanced Voice & Storage Features
 - ✅ **Default Voice Library**: 10 built-in professional voices available instantly

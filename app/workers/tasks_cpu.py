@@ -161,7 +161,7 @@ def assemble_video(image_paths_from_libreoffice, job_id: int):
                     except:
                         pass  # Ignore fps setting if not supported
                     
-                    final_clip = image_clip.set_audio(audio_clip)
+                    final_clip = image_clip.with_audio(audio_clip)
                     clips.append(final_clip)
                     print(f"Successfully created clip for slide {i}")
                 except Exception as e:
@@ -171,7 +171,7 @@ def assemble_video(image_paths_from_libreoffice, job_id: int):
                     # Use a simple approach - create video clip without image
                     from moviepy import ColorClip
                     color_clip = ColorClip(size=(1920,1080), color=(0,0,0), duration=audio_clip.duration)
-                    final_clip = color_clip.set_audio(audio_clip)
+                    final_clip = color_clip.with_audio(audio_clip)
                     clips.append(final_clip)
                     print(f"Created fallback black screen for slide {i}")
 
