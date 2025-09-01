@@ -1,4 +1,4 @@
-from app.workers.celery_app import app as celery_app
+from app.workers.celery_app_cpu import app as celery_app
 from app.db.session import SessionLocal
 from app import crud
 from app.services.minio_service import minio_service
@@ -8,8 +8,9 @@ import io
 import os
 import tempfile
 from celery import chord, group
-from moviepy.editor import ImageClip, AudioFileClip, concatenate_videoclips
-from .tasks_gpu import synthesize_audio
+from moviepy import ImageClip, AudioFileClip, concatenate_videoclips
+# Import tasks through celery to avoid direct module imports
+# This prevents MoviePy being loaded in GPU worker
 
 @celery_app.task(name="app.workers.tasks_cpu.decompose_presentation")
 def decompose_presentation(job_id: int):
@@ -57,7 +58,8 @@ def decompose_presentation(job_id: int):
 
         callback = assemble_video.s(job_id=job_id)
         header = group(
-            synthesize_audio.s(job_id=job_id, slide_number=i+1) for i in range(num_slides)
+            celery_app.send_task('app.workers.tasks_gpu.synthesize_audio', 
+                               args=(job_id, i+1)) for i in range(num_slides)
         )
         chord(header)(callback)
 

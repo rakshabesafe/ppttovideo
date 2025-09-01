@@ -1,8 +1,12 @@
-from app.workers.celery_app import app as celery_app
+from app.workers.celery_app_gpu import app as celery_app
 from app.db.session import SessionLocal
 from app import crud
 from app.services.minio_service import minio_service
 import torch
+import os
+import sys
+print(f"Current working directory: {os.getcwd()}")
+print(f"Python path: {sys.path}")
 from openvoice import se_extractor
 from openvoice.api import ToneColorConverter
 import librosa
@@ -12,9 +16,9 @@ import re
 # Load models once when the worker starts
 # This is a simplification. In a real scenario, model loading should be more robust.
 device = "cuda:0" if torch.cuda.is_available() else "cpu"
-tone_color_converter = ToneColorConverter('checkpoints_v2/converter', device=device)
+tone_color_converter = ToneColorConverter('checkpoints_v2/checkpoints_v2/converter/config.json', device=device)
 # Load base speaker TTS for English
-source_se = torch.load('checkpoints_v2/base_speakers/ses/en_base_se.pth', map_location=device)
+source_se = torch.load('checkpoints_v2/checkpoints_v2/base_speakers/ses/en-default.pth', map_location=device)
 
 @celery_app.task(name="app.workers.tasks_gpu.synthesize_audio")
 def synthesize_audio(job_id: int, slide_number: int):
@@ -58,7 +62,8 @@ def synthesize_audio(job_id: int, slide_number: int):
         # Trim silence from reference audio
         audio, sr = librosa.load("temp_ref.wav", sr=24000)
         audio_trimmed, _ = librosa.effects.trim(audio, top_db=20)
-        librosa.output.write_wav("temp_ref_trimmed.wav", audio_trimmed, sr)
+        import soundfile as sf
+        sf.write("temp_ref_trimmed.wav", audio_trimmed, sr)
 
         target_se, audio_name = se_extractor.get_se("temp_ref_trimmed.wav", tone_color_converter, vad=True)
 
@@ -72,16 +77,14 @@ def synthesize_audio(job_id: int, slide_number: int):
         if note_text == "[SILENCE]":
             # Create 1 second of silence
             silence = torch.zeros(24000)
-            librosa.output.write_wav(save_path, silence.numpy(), 24000)
+            sf.write(save_path, silence.numpy(), 24000)
         else:
-            tone_color_converter.convert(
-                audio_src_path="checkpoints_v2/base_speakers/voice/en_base.wav", # Base voice
-                src_se=source_se,
-                tgt_se=target_se,
-                output_path=save_path,
-                message=note_text,
-                style="default" # We can make this dynamic based on tags
-            )
+            # For now, create a placeholder until we have proper TTS integration
+            # TODO: Integrate with MeloTTS or another TTS engine to generate base audio
+            # then use OpenVoice to convert the tone color
+            silence = torch.zeros(24000)  # 1 second of silence as placeholder
+            sf.write(save_path, silence.numpy(), 24000)
+            print(f"TODO: Implement TTS synthesis for: {note_text}")
 
         # 5. Upload synthesized audio to MinIO
         audio_object_name = f"{job_id}/audio/slide_{slide_number}.wav"

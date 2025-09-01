@@ -29,7 +29,7 @@ class User(UserBase):
     created_at: datetime.datetime
 
     class Config:
-        orm_mode = True
+        from_attributes = True
 
 class VoiceClone(VoiceCloneBase):
     id: int
@@ -38,7 +38,7 @@ class VoiceClone(VoiceCloneBase):
     owner_id: int
 
     class Config:
-        orm_mode = True
+        from_attributes = True
 
 class PresentationJob(PresentationJobBase):
     id: int
@@ -51,4 +51,4 @@ class PresentationJob(PresentationJobBase):
     voice_clone_id: int
 
     class Config:
-        orm_mode = True
+        from_attributes = True

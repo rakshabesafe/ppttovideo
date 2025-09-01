@@ -1,5 +1,6 @@
 from sqlalchemy.orm import Session
-from . import models, schemas
+from .db import models
+from . import schemas
 
 # User CRUD
 def get_user(db: Session, user_id: int):
@@ -20,7 +21,7 @@ def create_user(db: Session, user: schemas.UserCreate):
 
 # Voice Clone CRUD
 def create_voice_clone(db: Session, voice_clone: schemas.VoiceCloneCreate, s3_path: str):
-    db_voice_clone = models.VoiceClone(**voice_clone.dict(), s3_path=s3_path)
+    db_voice_clone = models.VoiceClone(**voice_clone.model_dump(), s3_path=s3_path)
     db.add(db_voice_clone)
     db.commit()
     db.refresh(db_voice_clone)
