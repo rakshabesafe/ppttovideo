@@ -12,6 +12,7 @@ from openvoice.api import ToneColorConverter
 import librosa
 import io
 import re
+import soundfile as sf
 
 # Load models once when the worker starts
 # This is a simplification. In a real scenario, model loading should be more robust.
@@ -31,15 +32,24 @@ def synthesize_audio(job_id: int, slide_number: int):
         if not job:
             raise Exception(f"Job {job_id} not found.")
 
-        # 1. Get reference audio for voice clone
+        # 1. Get reference audio or built-in speaker embedding for voice clone
         voice_clone = job.voice_clone
         ref_audio_path = voice_clone.s3_path
-        ref_bucket, ref_object = ref_audio_path.split('/', 2)[1:]
-
-        ref_response = minio_service.client.get_object(ref_bucket, ref_object)
-        ref_audio_data = io.BytesIO(ref_response.read())
-        ref_response.close()
-        ref_response.release_conn()
+        
+        # Check if this is a built-in speaker
+        if ref_audio_path.startswith("builtin://"):
+            # Use built-in speaker embedding
+            speaker_name = ref_audio_path.replace("builtin://", "").replace(".pth", "")
+            target_se = torch.load(f'checkpoints_v2/checkpoints_v2/base_speakers/ses/{speaker_name}.pth', map_location=device)
+            use_builtin_speaker = True
+        else:
+            # Use uploaded voice clone
+            ref_bucket, ref_object = ref_audio_path.split('/', 2)[1:]
+            ref_response = minio_service.client.get_object(ref_bucket, ref_object)
+            ref_audio_data = io.BytesIO(ref_response.read())
+            ref_response.close()
+            ref_response.release_conn()
+            use_builtin_speaker = False
 
         # 2. Get note text for the slide
         note_object_name = f"{job_id}/notes/slide_{slide_number}.txt"
@@ -54,18 +64,29 @@ def synthesize_audio(job_id: int, slide_number: int):
             # In a real app, we might want a minimum slide duration instead.
             note_text = "[SILENCE]" # Special tag to handle silence
 
-        # 3. Process reference audio and extract tone color
-        # For simplicity, we use a temporary file. A better way is in-memory processing.
-        with open("temp_ref.wav", "wb") as f:
-            f.write(ref_audio_data.getvalue())
+        # 3. Process reference audio and extract tone color (skip for builtin speakers)
+        if not use_builtin_speaker:
+            # Determine file format from S3 path
+            file_extension = ref_audio_path.split('.')[-1].lower()
+            temp_filename = f"temp_ref.{file_extension}"
+            
+            # For simplicity, we use a temporary file. A better way is in-memory processing.
+            with open(temp_filename, "wb") as f:
+                f.write(ref_audio_data.getvalue())
 
-        # Trim silence from reference audio
-        audio, sr = librosa.load("temp_ref.wav", sr=24000)
-        audio_trimmed, _ = librosa.effects.trim(audio, top_db=20)
-        import soundfile as sf
-        sf.write("temp_ref_trimmed.wav", audio_trimmed, sr)
+            # Trim silence from reference audio (librosa can handle both WAV and MP3)
+            audio, sr = librosa.load(temp_filename, sr=24000)
+            audio_trimmed, _ = librosa.effects.trim(audio, top_db=20)
+            
+            # Check if audio is too short after trimming
+            min_duration = 3.0  # 3 seconds minimum
+            if len(audio_trimmed) < min_duration * sr:
+                # Use original audio if trimmed version is too short
+                audio_trimmed = audio
+            
+            sf.write("temp_ref_trimmed.wav", audio_trimmed, sr)
 
-        target_se, audio_name = se_extractor.get_se("temp_ref_trimmed.wav", tone_color_converter, vad=True)
+            target_se, audio_name = se_extractor.get_se("temp_ref_trimmed.wav", tone_color_converter, vad=True)
 
         # 4. Synthesize speech
         # This is a simplified implementation. OpenVoice has more style controls.

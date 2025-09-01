@@ -14,11 +14,19 @@ def create_voice_clone(
     file: UploadFile = File(...),
     db: Session = Depends(get_db)
 ):
-    if not file.content_type == "audio/wav":
-        raise HTTPException(status_code=400, detail="Invalid file type. Please upload a .wav file.")
+    # Accept both WAV and MP3 files
+    allowed_types = ["audio/wav", "audio/mpeg", "audio/mp3"]
+    if file.content_type not in allowed_types:
+        raise HTTPException(status_code=400, detail="Invalid file type. Please upload a .wav or .mp3 file.")
 
     # Generate a unique name for the file to avoid collisions
-    file_extension = ".wav"
+    if file.content_type == "audio/wav":
+        file_extension = ".wav"
+    elif file.content_type in ["audio/mpeg", "audio/mp3"]:
+        file_extension = ".mp3"
+    else:
+        file_extension = ".wav"  # fallback
+    
     object_name = f"{uuid.uuid4()}{file_extension}"
 
     # Upload to MinIO

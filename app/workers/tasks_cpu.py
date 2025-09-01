@@ -56,12 +56,22 @@ def decompose_presentation(job_id: int):
         if len(image_paths) != num_slides:
             raise Exception(f"Mismatch between number of images ({len(image_paths)}) and slides ({num_slides}).")
 
-        callback = assemble_video.s(job_id=job_id)
-        header = group(
-            celery_app.send_task('app.workers.tasks_gpu.synthesize_audio', 
-                               args=(job_id, i+1)) for i in range(num_slides)
-        )
-        chord(header)(callback)
+        # Create audio synthesis tasks for all slides
+        audio_tasks = []
+        for i in range(num_slides):
+            # Send audio synthesis task to GPU worker
+            task_id = f"synthesize_audio_{job_id}_{i+1}"
+            print(f"Sending audio synthesis task for job {job_id}, slide {i+1}")
+            result = celery_app.send_task('app.workers.tasks_gpu.synthesize_audio', 
+                                        args=(job_id, i+1), 
+                                        task_id=task_id,
+                                        queue='gpu_tasks')
+            print(f"Task sent with result: {result}")
+            audio_tasks.append(result)
+        
+        # For now, just trigger the assembly task after a delay to allow audio synthesis
+        # TODO: Implement proper chord coordination
+        assemble_video.apply_async(args=([None] * num_slides, job_id), countdown=30)
 
         crud.update_job_status(db, job_id, "synthesizing_audio")
 

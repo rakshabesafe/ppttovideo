@@ -30,6 +30,8 @@ services:
       - "19001:9001"
     volumes:
       - minio_data:/data
+      - ${PPT_OUTPUT_VOLUME:-./data/output}:/minio-output
+      - ${PPT_SLIDES_VOLUME:-./data/slides}:/minio-slides
     command: server /data --console-address ":9001"
     restart: unless-stopped
 
