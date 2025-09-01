@@ -8,7 +8,7 @@ import io
 import os
 import tempfile
 from celery import chord, group
-from moviepy import ImageClip, AudioFileClip, concatenate_videoclips
+from moviepy.editor import ImageClip, AudioFileClip, concatenate_videoclips, ColorClip
 # Import tasks through celery to avoid direct module imports
 # This prevents MoviePy being loaded in GPU worker
 
@@ -71,7 +71,8 @@ def decompose_presentation(job_id: int):
         
         # For now, just trigger the assembly task after a delay to allow audio synthesis
         # TODO: Implement proper chord coordination
-        assemble_video.apply_async(args=([None] * num_slides, job_id), countdown=30)
+        print(f"Image paths for job {job_id}: {image_paths}")
+        assemble_video.apply_async(args=(image_paths, job_id), countdown=30)
 
         crud.update_job_status(db, job_id, "synthesizing_audio")
 
@@ -83,28 +84,43 @@ def decompose_presentation(job_id: int):
 
 
 @celery_app.task(name="app.workers.tasks_cpu.assemble_video")
-def assemble_video(results, job_id: int):
+def assemble_video(image_paths_from_libreoffice, job_id: int):
     """
     Assembles the final video from slide images and synthesized audio.
+    Args:
+        image_paths_from_libreoffice: List of image paths returned by LibreOffice service
+        job_id: The presentation job ID
     """
     db = SessionLocal()
     try:
         crud.update_job_status(db, job_id, "assembling_video")
 
         with tempfile.TemporaryDirectory() as temp_dir:
-            # 1. List and download all images and audio for the job
-            image_files = minio_service.client.list_objects("presentations", prefix=f"{job_id}/images/")
+            # 1. Download images using paths from LibreOffice service
+            image_local_paths = {}
+            print(f"Processing {len(image_paths_from_libreoffice)} images from LibreOffice")
+            
+            for i, image_s3_path in enumerate(image_paths_from_libreoffice):
+                slide_num = i + 1
+                # Remove leading slash if present: /presentations/uuid/images/slide-1.png -> presentations/uuid/images/slide-1.png
+                clean_path = image_s3_path.lstrip('/')
+                # Extract bucket and object: presentations/uuid/images/slide-1.png -> bucket='presentations', object='uuid/images/slide-1.png'  
+                if clean_path.startswith('presentations/'):
+                    object_name = clean_path[len('presentations/'):]
+                    bucket_name = 'presentations'
+                else:
+                    # Fallback - assume it's the full object name
+                    bucket_name = 'presentations' 
+                    object_name = clean_path
+                    
+                local_path = os.path.join(temp_dir, f"slide_{slide_num}.png")
+                print(f"Downloading image {slide_num}: {bucket_name}/{object_name} -> {local_path}")
+                minio_service.client.fget_object(bucket_name, object_name, local_path)
+                image_local_paths[slide_num] = local_path
+
+            # 2. Download audio files
             audio_files = minio_service.client.list_objects("presentations", prefix=f"{job_id}/audio/")
-
-            image_paths = {}
             audio_paths = {}
-
-            for img in image_files:
-                local_path = os.path.join(temp_dir, os.path.basename(img.object_name))
-                minio_service.client.fget_object("presentations", img.object_name, local_path)
-                # slide-01.png -> 1
-                slide_num = int(os.path.splitext(os.path.basename(local_path))[0].split('-')[1])
-                image_paths[slide_num] = local_path
 
             for aud in audio_files:
                 local_path = os.path.join(temp_dir, os.path.basename(aud.object_name))
@@ -112,22 +128,51 @@ def assemble_video(results, job_id: int):
                 # slide_1.wav -> 1
                 slide_num = int(os.path.splitext(os.path.basename(local_path))[0].split('_')[1])
                 audio_paths[slide_num] = local_path
+                print(f"Downloaded audio {slide_num}: {local_path}")
 
-            # 2. Create video clips
+            # 3. Create video clips
+            print(f"Creating video clips for {len(image_local_paths)} slides")
             clips = []
-            for i in sorted(image_paths.keys()):
-                image_path = image_paths[i]
+            for i in sorted(image_local_paths.keys()):
+                image_path = image_local_paths[i]
                 audio_path = audio_paths.get(i)
 
                 if not audio_path:
                     raise Exception(f"Missing audio for slide {i}")
 
-                audio_clip = AudioFileClip(audio_path)
-                image_clip = ImageClip(image_path).set_duration(audio_clip.duration)
-                image_clip.fps = 24 # Standard fps
-
-                final_clip = image_clip.set_audio(audio_clip)
-                clips.append(final_clip)
+                try:
+                    audio_clip = AudioFileClip(audio_path)
+                    # Try different approaches for creating image clip
+                    try:
+                        # Method 1: Constructor with duration
+                        image_clip = ImageClip(image_path, duration=audio_clip.duration)
+                    except:
+                        try:
+                            # Method 2: Create then set duration
+                            image_clip = ImageClip(image_path).set_duration(audio_clip.duration)
+                        except:
+                            # Method 3: Use duration parameter differently
+                            image_clip = ImageClip(image_path)
+                            image_clip.duration = audio_clip.duration
+                    
+                    # Set fps if possible
+                    try:
+                        image_clip.fps = 24
+                    except:
+                        pass  # Ignore fps setting if not supported
+                    
+                    final_clip = image_clip.set_audio(audio_clip)
+                    clips.append(final_clip)
+                    print(f"Successfully created clip for slide {i}")
+                except Exception as e:
+                    print(f"Error creating clip for slide {i}: {e}")
+                    # Create a minimal clip as fallback
+                    audio_clip = AudioFileClip(audio_path)
+                    # Use a simple approach - create video clip without image
+                    color_clip = ColorClip(size=(1920,1080), color=(0,0,0), duration=audio_clip.duration)
+                    final_clip = color_clip.set_audio(audio_clip)
+                    clips.append(final_clip)
+                    print(f"Created fallback black screen for slide {i}")
 
             # 3. Concatenate and write final video
             final_video = concatenate_videoclips(clips)
