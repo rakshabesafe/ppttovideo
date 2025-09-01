@@ -88,17 +88,35 @@ docker-compose up --build
 3. Upload a clear audio file (WAV or MP3, 10-30 seconds)
 4. Click **"Upload Voice Clone"**
 
-### Step 3: Generate Video
-1. Upload your PowerPoint (.pptx) file
+### Step 3: Prepare PowerPoint with Notes
+**Important**: Add narration text to your PowerPoint slide notes for voice generation!
+
+**Basic Notes:**
+```
+Welcome to our quarterly review. Today we'll cover revenue, 
+market growth, and strategic initiatives for next quarter.
+```
+
+**Advanced Features with Tags:**
+```
+[EMOTION:excited] Welcome to our product launch! [PAUSE:1]
+Revenue grew by [EMPHASIS:forty percent] this quarter.
+[SPEED:slow] Let me explain this technical concept carefully.
+```
+
+📖 **[Complete PPT Notes Guide](docs/PPT_NOTES_GUIDE.md)** with examples and best practices.
+
+### Step 4: Generate Video
+1. Upload your PowerPoint (.pptx) file **with notes**
 2. Select a voice clone
 3. Click **"Generate Video"**
 4. Monitor progress in Jobs Dashboard
 
-### Step 4: Download Result
+### Step 5: Download Result
 - Processing takes 2-10 minutes
 - Click **"Download"** when status shows **"completed"**
 
-### Step 5: Cleanup (Optional)
+### Step 6: Cleanup (Optional)
 Keep your system clean with built-in cleanup tools:
 
 **Via Web Interface:**
