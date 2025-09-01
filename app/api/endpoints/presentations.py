@@ -67,11 +67,37 @@ def download_video(job_id: int, db: Session = Depends(get_db)):
         bucket_name = "output"
         object_name = db_job.s3_video_path.split('/')[-1]
 
-        response = minio_service.client.get_object(bucket_name, object_name)
+        # Get file information first to determine content length
+        try:
+            file_stat = minio_service.client.stat_object(bucket_name, object_name)
+            file_size = file_stat.size
+        except S3Error:
+            file_size = None
 
-        return StreamingResponse(response.stream(32*1024), media_type="video/mp4", headers={
-            "Content-Disposition": f"attachment; filename={object_name}"
-        })
+        # Get file data - load entire file to avoid streaming issues in some browsers
+        response = minio_service.client.get_object(bucket_name, object_name)
+        video_data = response.read()
+        response.close()
+        response.release_conn()
+        
+        # Prepare headers with proper content length and caching
+        headers = {
+            "Content-Disposition": f"inline; filename={object_name}",
+            "Accept-Ranges": "bytes", 
+            "Cache-Control": "no-cache",
+            "Access-Control-Allow-Origin": "*",
+            "Access-Control-Allow-Methods": "GET",
+            "Access-Control-Allow-Headers": "Range, Content-Range, Content-Length",
+            "Content-Length": str(len(video_data))
+        }
+
+        # Return the entire file as response instead of streaming
+        from fastapi.responses import Response
+        return Response(
+            content=video_data,
+            media_type="video/mp4",
+            headers=headers
+        )
 
     except S3Error as e:
         raise HTTPException(status_code=500, detail=f"MinIO error: {e}")
