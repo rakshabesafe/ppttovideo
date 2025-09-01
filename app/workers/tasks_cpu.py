@@ -8,7 +8,7 @@ import io
 import os
 import tempfile
 from celery import chord, group
-from moviepy.editor import ImageClip, AudioFileClip, concatenate_videoclips, ColorClip
+from moviepy import ImageClip, AudioFileClip, concatenate_videoclips
 # Import tasks through celery to avoid direct module imports
 # This prevents MoviePy being loaded in GPU worker
 
@@ -169,6 +169,7 @@ def assemble_video(image_paths_from_libreoffice, job_id: int):
                     # Create a minimal clip as fallback
                     audio_clip = AudioFileClip(audio_path)
                     # Use a simple approach - create video clip without image
+                    from moviepy import ColorClip
                     color_clip = ColorClip(size=(1920,1080), color=(0,0,0), duration=audio_clip.duration)
                     final_clip = color_clip.set_audio(audio_clip)
                     clips.append(final_clip)
