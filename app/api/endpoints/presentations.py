@@ -75,6 +75,3 @@ def download_video(job_id: int, db: Session = Depends(get_db)):
 
     except S3Error as e:
         raise HTTPException(status_code=500, detail=f"MinIO error: {e}")
-    finally:
-        response.close()
-        response.release_conn()

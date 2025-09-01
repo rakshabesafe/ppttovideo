@@ -6,6 +6,8 @@ RUN apt-get update && apt-get install -y \
     libreoffice-writer \
     libreoffice-impress \
     libreoffice-calc \
+    libreoffice-java-common \
+    default-jre \
     poppler-utils \
     python3-pip \
     --no-install-recommends \

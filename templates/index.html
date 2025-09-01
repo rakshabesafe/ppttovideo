@@ -25,11 +25,25 @@
     <div class="container">
         <div class="col">
             <h2>Step 1: Create or Select User</h2>
-            <form id="user-form">
+            <div id="user-selection">
+                <button id="show-login-form">Login</button>
+                <button id="show-create-form">Create User</button>
+            </div>
+
+            <form id="login-form" class="hidden">
+                <h3>Login</h3>
+                <label for="login-username">User Name:</label>
+                <input type="text" id="login-username" name="login-username" required>
+                <button type="submit">Login</button>
+            </form>
+
+            <form id="create-user-form">
+                <h3>Create User</h3>
                 <label for="username">User Name:</label>
                 <input type="text" id="username" name="username" required>
                 <button type="submit">Create User</button>
             </form>
+
             <div id="user-info" class="hidden">
                 <h3>Current User: <span id="current-username"></span> (ID: <span id="current-user-id"></span>)</h3>
             </div>
@@ -39,8 +53,8 @@
                 <form id="voice-clone-form" enctype="multipart/form-data">
                     <label for="clone-name">New Clone Name:</label>
                     <input type="text" id="clone-name" name="clone-name" required>
-                    <label for="wav-file">Reference WAV file:</label>
-                    <input type="file" id="wav-file" name="wav-file" accept=".wav" required>
+                    <label for="wav-file">Reference Audio file (WAV or MP3):</label>
+                    <input type="file" id="wav-file" name="wav-file" accept=".wav,.mp3" required>
                     <button type="submit">Upload Voice Clone</button>
                 </form>
                 <h3>Existing Voice Clones:</h3>
@@ -84,12 +98,47 @@
         const API_BASE_URL = "/api";
         let currentUserId = null;
 
-        const userForm = document.getElementById('user-form');
+        const userSelection = document.getElementById('user-selection');
+        const loginForm = document.getElementById('login-form');
+        const createUserForm = document.getElementById('create-user-form');
         const userInfo = document.getElementById('user-info');
         const voiceCloneSection = document.getElementById('voice-clone-section');
         const presentationSection = document.getElementById('presentation-section');
 
-        userForm.addEventListener('submit', async (e) => {
+        document.getElementById('show-login-form').addEventListener('click', () => {
+            loginForm.classList.remove('hidden');
+            createUserForm.classList.add('hidden');
+        });
+
+        document.getElementById('show-create-form').addEventListener('click', () => {
+            loginForm.classList.add('hidden');
+            createUserForm.classList.remove('hidden');
+        });
+
+        loginForm.addEventListener('submit', async (e) => {
+            e.preventDefault();
+            const username = document.getElementById('login-username').value;
+            const response = await fetch(`${API_BASE_URL}/users/by_name/${username}`);
+
+            if (response.ok) {
+                const user = await response.json();
+                currentUserId = user.id;
+                document.getElementById('current-username').textContent = user.name;
+                document.getElementById('current-user-id').textContent = user.id;
+                userInfo.classList.remove('hidden');
+                voiceCloneSection.classList.remove('hidden');
+                presentationSection.classList.remove('hidden');
+                userSelection.classList.add('hidden');
+                loginForm.classList.add('hidden');
+                createUserForm.classList.add('hidden');
+                await loadVoiceClones();
+                await loadAllJobs();
+            } else {
+                alert("Login failed. User not found.");
+            }
+        });
+
+        createUserForm.addEventListener('submit', async (e) => {
             e.preventDefault();
             const username = document.getElementById('username').value;
             const response = await fetch(`${API_BASE_URL}/users/`, {
@@ -106,7 +155,9 @@
                 userInfo.classList.remove('hidden');
                 voiceCloneSection.classList.remove('hidden');
                 presentationSection.classList.remove('hidden');
-                userForm.classList.add('hidden');
+                userSelection.classList.add('hidden');
+                loginForm.classList.add('hidden');
+                createUserForm.classList.add('hidden');
                 await loadVoiceClones();
                 await loadAllJobs();
             } else {

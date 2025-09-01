@@ -13,6 +13,7 @@ app.conf.update(
     task_routes={
         'app.workers.tasks_cpu.decompose_presentation': {'queue': 'cpu_tasks'},
         'app.workers.tasks_cpu.assemble_video': {'queue': 'cpu_tasks'},
+        'app.workers.tasks_gpu.synthesize_audio': {'queue': 'gpu_tasks'},
     },
     task_serializer='json',
     accept_content=['json'],

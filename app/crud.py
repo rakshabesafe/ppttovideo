@@ -9,6 +9,9 @@ def get_user(db: Session, user_id: int):
 def get_user_by_email(db: Session, email: str):
     return db.query(models.User).filter(models.User.email == email).first()
 
+def get_user_by_name(db: Session, name: str):
+    return db.query(models.User).filter(models.User.name == name).first()
+
 def get_users(db: Session, skip: int = 0, limit: int = 100):
     return db.query(models.User).offset(skip).limit(limit).all()
 
@@ -55,3 +58,28 @@ def update_job_status(db: Session, job_id: int, status: str, video_path: str = N
         db.commit()
         db.refresh(db_job)
     return db_job
+
+def create_default_voice_clones(db: Session):
+    """Create default voice clones using OpenVoice built-in speakers"""
+    default_voices = [
+        {"name": "English (Default)", "s3_path": "builtin://en-default.pth", "owner_id": 1},
+        {"name": "English (US)", "s3_path": "builtin://en-us.pth", "owner_id": 1}, 
+        {"name": "English (UK)", "s3_path": "builtin://en-br.pth", "owner_id": 1},
+        {"name": "English (Australia)", "s3_path": "builtin://en-au.pth", "owner_id": 1},
+        {"name": "English (India)", "s3_path": "builtin://en-india.pth", "owner_id": 1},
+        {"name": "Spanish", "s3_path": "builtin://es.pth", "owner_id": 1},
+        {"name": "French", "s3_path": "builtin://fr.pth", "owner_id": 1},
+        {"name": "Japanese", "s3_path": "builtin://jp.pth", "owner_id": 1},
+        {"name": "Korean", "s3_path": "builtin://kr.pth", "owner_id": 1},
+        {"name": "Chinese", "s3_path": "builtin://zh.pth", "owner_id": 1},
+    ]
+    
+    for voice_data in default_voices:
+        # Check if voice clone already exists
+        existing = db.query(models.VoiceClone).filter(models.VoiceClone.name == voice_data["name"]).first()
+        if not existing:
+            db_voice = models.VoiceClone(**voice_data)
+            db.add(db_voice)
+    
+    db.commit()
+    return default_voices

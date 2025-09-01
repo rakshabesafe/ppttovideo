@@ -1,13 +1,31 @@
 from fastapi import FastAPI, Request
 from fastapi.templating import Jinja2Templates
-from app.db.session import engine
+from app.db.session import engine, SessionLocal
 from app.db import models
 from app.api.endpoints import users, voice_clones, presentations
+from app import crud
 
 # This will create the tables in the database
 models.Base.metadata.create_all(bind=engine)
 
 app = FastAPI(title="Presentation Video Generator API")
+
+@app.on_event("startup")
+async def startup_event():
+    """Initialize default data on startup"""
+    db = SessionLocal()
+    try:
+        # Create default system user
+        existing_user = crud.get_user_by_name(db, "System")
+        if not existing_user:
+            from app.schemas import UserCreate
+            user_data = UserCreate(name="System", email="system@localhost")
+            crud.create_user(db, user_data)
+        
+        # Create default voice clones
+        crud.create_default_voice_clones(db)
+    finally:
+        db.close()
 
 templates = Jinja2Templates(directory="/templates")
 
