@@ -41,6 +41,10 @@ GPU_COUNT=1
 NVIDIA_VISIBLE_DEVICES=all
 NVIDIA_DRIVER_CAPABILITIES=compute,utility
 
+# TTS Timeout Configuration (optional)
+TTS_SOFT_TIME_LIMIT=300    # Soft timeout - triggers fallback audio (5 minutes)
+TTS_HARD_TIME_LIMIT=360    # Hard timeout - kills hung tasks (6 minutes)
+
 # For CPU-only systems  
 GPU_RUNTIME=runc
 GPU_COUNT=0
@@ -94,6 +98,8 @@ docker-compose up --build
 | `NVML initialization failed` | Check GPU drivers |
 | `No GPUs found` | Verify NVIDIA_VISIBLE_DEVICES |
 | `Permission denied` | Run docker with sudo or add user to docker group |
+| `TTS tasks hang/timeout` | Check timeout settings in `.env`, verify BERT model caching |
+| `Audio synthesis fails` | Test TTS components: `docker exec ppt-worker_gpu python test_tts_isolated.py` |
 
 ## Performance Comparison
 
@@ -162,9 +168,34 @@ docker logs ppt-worker_gpu -f
 
 ## Fallback Behavior
 
-The system automatically falls back to CPU mode if:
-- 🔄 GPU initialization times out (30 seconds)
-- 🔄 TTS synthesis hangs (8 minutes soft timeout)
-- 🔄 CUDA/GPU errors occur
+The system has multiple fallback layers for robust operation:
 
-This ensures the pipeline always completes, even without GPU support.
+### GPU → CPU Fallback
+- 🔄 GPU initialization times out (30 seconds)
+- 🔄 CUDA/GPU errors occur
+- 🔄 Automatically switches to CPU mode
+
+### TTS Synthesis Fallbacks
+1. **Voice Cloning (OpenVoice)** → Base TTS (MeloTTS) → Silence Audio
+2. **Configurable Timeouts:**
+   - Soft timeout (default 5 min): Creates fallback silence audio
+   - Hard timeout (default 6 min): Kills hung tasks completely
+3. **BERT Model Issues:** Pre-cached models prevent hanging during initialization
+
+This multi-layer approach ensures the pipeline always completes successfully.
+
+## TTS Testing & Debugging
+
+```bash
+# Test TTS component isolation
+docker exec ppt-worker_gpu python test_tts_isolated.py
+
+# Run comprehensive TTS tests
+docker exec ppt-worker_gpu python test_tts_components_runner.py
+
+# Verify BERT model caching
+docker exec ppt-worker_gpu python -c "from transformers import BertTokenizer; print('BERT OK')"
+
+# Monitor TTS processing in real-time
+docker logs ppt-worker_gpu -f | grep -E "(TTS|synthesis|timeout|fallback)"
+```

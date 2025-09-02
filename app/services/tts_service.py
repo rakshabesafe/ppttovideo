@@ -1,0 +1,490 @@
+"""
+TTS (Text-to-Speech) Service Components
+
+This module provides modular, testable components for TTS synthesis:
+- MeloTTSEngine: Base TTS synthesis using MeloTTS
+- OpenVoiceCloner: Voice cloning using OpenVoice
+- TTSProcessor: Orchestrates the complete TTS pipeline
+"""
+
+import os
+import sys
+import time
+import torch
+import librosa
+import soundfile as sf
+import tempfile
+import re
+from typing import Optional, Tuple, Dict, Any
+from abc import ABC, abstractmethod
+
+# Add MeloTTS to path
+sys.path.append('/src/melotts')
+
+# Import required libraries
+try:
+    from openvoice import se_extractor
+    from openvoice.api import ToneColorConverter
+    from melo.api import TTS
+except ImportError as e:
+    print(f"Warning: TTS dependencies not available: {e}")
+
+
+class TTSException(Exception):
+    """Base exception for TTS operations"""
+    pass
+
+
+class MeloTTSException(TTSException):
+    """Exception specific to MeloTTS operations"""
+    pass
+
+
+class OpenVoiceException(TTSException):
+    """Exception specific to OpenVoice operations"""
+    pass
+
+
+class TextProcessor:
+    """Handles text preprocessing and tag parsing for TTS"""
+    
+    @staticmethod
+    def parse_note_text_tags(text: str) -> Tuple[str, str, float, float]:
+        """
+        Parse emotion, speed, and pitch tags from note text.
+        
+        Args:
+            text: Input text with optional tags like [EMOTION:excited], [SPEED:fast], [PITCH:high]
+            
+        Returns:
+            Tuple of (clean_text, emotion, speed, pitch)
+        """
+        # Default values
+        emotion = "neutral"
+        speed = 1.0
+        pitch = 1.0
+        
+        # Extract emotion tags
+        emotion_match = re.search(r'\[EMOTION:(excited|sad|angry|happy|neutral)\]', text, re.IGNORECASE)
+        if emotion_match:
+            emotion = emotion_match.group(1).lower()
+            text = re.sub(r'\[EMOTION:[^\]]+\]', '', text, flags=re.IGNORECASE)
+        
+        # Extract speed tags
+        speed_match = re.search(r'\[SPEED:(slow|normal|fast|[\d.]+)\]', text, re.IGNORECASE)
+        if speed_match:
+            speed_val = speed_match.group(1).lower()
+            if speed_val == "slow":
+                speed = 0.7
+            elif speed_val == "fast":
+                speed = 1.3
+            elif speed_val == "normal":
+                speed = 1.0
+            else:
+                try:
+                    speed = float(speed_val)
+                    speed = max(0.5, min(2.0, speed))  # Clamp between 0.5 and 2.0
+                except ValueError:
+                    speed = 1.0
+            text = re.sub(r'\[SPEED:[^\]]+\]', '', text, flags=re.IGNORECASE)
+        
+        # Extract pitch tags
+        pitch_match = re.search(r'\[PITCH:(low|normal|high|[\d.]+)\]', text, re.IGNORECASE)
+        if pitch_match:
+            pitch_val = pitch_match.group(1).lower()
+            if pitch_val == "low":
+                pitch = 0.8
+            elif pitch_val == "high":
+                pitch = 1.2
+            elif pitch_val == "normal":
+                pitch = 1.0
+            else:
+                try:
+                    pitch = float(pitch_val)
+                    pitch = max(0.5, min(2.0, pitch))
+                except ValueError:
+                    pitch = 1.0
+            text = re.sub(r'\[PITCH:[^\]]+\]', '', text, flags=re.IGNORECASE)
+        
+        # Handle pause tags by converting to commas for natural pauses
+        text = re.sub(r'\[PAUSE:(\d+)\]', lambda m: ',' * int(m.group(1)), text, flags=re.IGNORECASE)
+        
+        # Handle emphasis tags by capitalizing words
+        text = re.sub(r'\[EMPHASIS:([^\]]+)\]', lambda m: m.group(1).upper(), text, flags=re.IGNORECASE)
+        
+        # Clean up extra whitespace
+        text = re.sub(r'\s+', ' ', text).strip()
+        
+        return text, emotion, speed, pitch
+
+
+class MeloTTSEngine:
+    """Handles MeloTTS base speech synthesis"""
+    
+    def __init__(self, device: str = None):
+        self.device = device or ("cuda:0" if torch.cuda.is_available() else "cpu")
+        self.tts_model: Optional[TTS] = None
+        self.speaker_ids: Dict[str, int] = {}
+        
+    def initialize(self) -> None:
+        """Initialize MeloTTS model and download required dependencies"""
+        if self.tts_model is not None:
+            return  # Already initialized
+            
+        try:
+            print("Initializing MeloTTS for speech synthesis...")
+            
+            # Download required NLTK data
+            try:
+                import nltk
+                print("Downloading required NLTK data...")
+                nltk.download('averaged_perceptron_tagger_eng', quiet=True)
+                nltk.download('averaged_perceptron_tagger', quiet=True)
+                nltk.download('cmudict', quiet=True)
+                print("NLTK data downloaded successfully")
+            except Exception as nltk_error:
+                print(f"NLTK setup warning: {nltk_error}")
+            
+            # Initialize MeloTTS
+            self.tts_model = TTS(language='EN', device=self.device)
+            self.speaker_ids = self.tts_model.hps.data.spk2id
+            print(f"MeloTTS initialized successfully with speakers: {list(self.speaker_ids.keys())}")
+            
+        except Exception as e:
+            raise MeloTTSException(f"MeloTTS initialization failed: {e}")
+    
+    def synthesize_to_file(self, text: str, output_path: str, speed: float = 1.0, 
+                          speaker_id: int = 0) -> str:
+        """
+        Synthesize text to audio file using MeloTTS
+        
+        Args:
+            text: Text to synthesize
+            output_path: Path where audio file should be saved
+            speed: Speech speed (0.5-2.0)
+            speaker_id: Speaker ID to use
+            
+        Returns:
+            Path to generated audio file
+            
+        Raises:
+            MeloTTSException: If synthesis fails
+        """
+        if self.tts_model is None:
+            self.initialize()
+            
+        try:
+            # Handle silence tag
+            if text == "[SILENCE]" or not text.strip():
+                # Create 1 second of silence
+                silence = torch.zeros(24000)  # 24kHz sample rate
+                sf.write(output_path, silence.numpy(), 24000)
+                return output_path
+            
+            print(f"Synthesizing with MeloTTS: '{text[:50]}...'")
+            
+            self.tts_model.tts_to_file(
+                text=text,
+                speaker_id=speaker_id,
+                output_path=output_path,
+                speed=speed,
+                quiet=True
+            )
+            
+            if not os.path.exists(output_path):
+                raise MeloTTSException("Audio file was not created")
+                
+            print(f"Base TTS audio generated successfully")
+            return output_path
+            
+        except Exception as e:
+            raise MeloTTSException(f"TTS synthesis failed: {e}")
+    
+    def is_initialized(self) -> bool:
+        """Check if MeloTTS is initialized"""
+        return self.tts_model is not None
+
+
+class OpenVoiceCloner:
+    """Handles voice cloning using OpenVoice"""
+    
+    def __init__(self, device: str = None):
+        self.device = device or ("cuda:0" if torch.cuda.is_available() else "cpu")
+        self.tone_converter: Optional[ToneColorConverter] = None
+        self.source_se = None  # Source speaker embedding (loaded once)
+        
+    def initialize(self) -> None:
+        """Initialize OpenVoice components"""
+        if self.tone_converter is not None:
+            return  # Already initialized
+            
+        try:
+            print("Initializing OpenVoice ToneColorConverter...")
+            self.tone_converter = ToneColorConverter(
+                'checkpoints_v2/checkpoints_v2/converter/config.json', 
+                device=self.device
+            )
+            
+            # Load source speaker embedding (used for all conversions)
+            self.source_se = torch.load(
+                'checkpoints_v2/checkpoints_v2/base_speakers/ses/en-default.pth',
+                map_location=self.device
+            )
+            print("OpenVoice initialized successfully")
+            
+        except Exception as e:
+            raise OpenVoiceException(f"OpenVoice initialization failed: {e}")
+    
+    def load_builtin_voice(self, speaker_name: str) -> torch.Tensor:
+        """
+        Load a built-in voice embedding
+        
+        Args:
+            speaker_name: Name of built-in speaker (e.g., 'en-us', 'en-br')
+            
+        Returns:
+            Voice embedding tensor
+        """
+        try:
+            embedding_path = f'checkpoints_v2/checkpoints_v2/base_speakers/ses/{speaker_name}.pth'
+            target_se = torch.load(embedding_path, map_location=self.device)
+            print(f"Loaded built-in voice: {speaker_name}")
+            return target_se
+        except Exception as e:
+            raise OpenVoiceException(f"Failed to load built-in voice '{speaker_name}': {e}")
+    
+    def extract_voice_from_audio(self, audio_data: bytes, file_extension: str) -> torch.Tensor:
+        """
+        Extract voice embedding from reference audio
+        
+        Args:
+            audio_data: Raw audio file data
+            file_extension: File extension (e.g., 'wav', 'mp3')
+            
+        Returns:
+            Voice embedding tensor
+        """
+        if self.tone_converter is None:
+            self.initialize()
+            
+        try:
+            # Save audio data to temporary file
+            temp_filename = f"temp_ref.{file_extension}"
+            with open(temp_filename, "wb") as f:
+                f.write(audio_data)
+            
+            # Load and trim silence
+            audio, sr = librosa.load(temp_filename, sr=24000)
+            audio_trimmed, _ = librosa.effects.trim(audio, top_db=20)
+            
+            # Check if audio is too short after trimming
+            min_duration = 3.0  # 3 seconds minimum
+            if len(audio_trimmed) < min_duration * sr:
+                audio_trimmed = audio  # Use original if trimmed is too short
+            
+            # Save trimmed audio
+            trimmed_path = "temp_ref_trimmed.wav"
+            sf.write(trimmed_path, audio_trimmed, sr)
+            
+            # Extract voice embedding
+            target_se, audio_name = se_extractor.get_se(
+                trimmed_path, 
+                self.tone_converter, 
+                vad=True
+            )
+            
+            # Clean up temporary files
+            for temp_file in [temp_filename, trimmed_path]:
+                if os.path.exists(temp_file):
+                    os.remove(temp_file)
+            
+            print("Voice embedding extracted successfully")
+            return target_se
+            
+        except Exception as e:
+            raise OpenVoiceException(f"Voice extraction failed: {e}")
+    
+    def clone_voice(self, base_audio_path: str, target_embedding: torch.Tensor, 
+                   output_path: str) -> str:
+        """
+        Apply voice cloning to base audio
+        
+        Args:
+            base_audio_path: Path to base TTS audio
+            target_embedding: Target voice embedding
+            output_path: Path for cloned audio output
+            
+        Returns:
+            Path to cloned audio file
+        """
+        if self.tone_converter is None or self.source_se is None:
+            self.initialize()
+            
+        try:
+            print("Applying voice cloning with OpenVoice...")
+            
+            self.tone_converter.convert(
+                audio_src_path=base_audio_path,
+                src_se=self.source_se,
+                tgt_se=target_embedding,
+                output_path=output_path,
+                message="Converting voice..."
+            )
+            
+            if not os.path.exists(output_path):
+                raise OpenVoiceException("Cloned audio file was not created")
+            
+            print("Voice cloning completed successfully")
+            return output_path
+            
+        except Exception as e:
+            raise OpenVoiceException(f"Voice cloning failed: {e}")
+    
+    def is_initialized(self) -> bool:
+        """Check if OpenVoice is initialized"""
+        return self.tone_converter is not None
+
+
+class TTSProcessor:
+    """High-level TTS processor that orchestrates MeloTTS and OpenVoice"""
+    
+    def __init__(self, device: str = None):
+        self.device = device or ("cuda:0" if torch.cuda.is_available() else "cpu")
+        self.melo_engine = MeloTTSEngine(device=self.device)
+        self.voice_cloner = OpenVoiceCloner(device=self.device)
+        self.text_processor = TextProcessor()
+        
+    def initialize(self) -> None:
+        """Initialize both MeloTTS and OpenVoice components"""
+        self.melo_engine.initialize()
+        self.voice_cloner.initialize()
+        
+    def synthesize_with_builtin_voice(self, text: str, speaker_name: str, 
+                                     output_path: str) -> str:
+        """
+        Synthesize speech using a built-in voice
+        
+        Args:
+            text: Text to synthesize
+            speaker_name: Built-in speaker name (e.g., 'en-us')
+            output_path: Output audio file path
+            
+        Returns:
+            Path to generated audio file
+        """
+        try:
+            # Parse text tags
+            clean_text, emotion, speed, pitch = self.text_processor.parse_note_text_tags(text)
+            
+            # Generate base TTS audio
+            temp_base = f"temp_base_{int(time.time())}.wav"
+            self.melo_engine.synthesize_to_file(
+                text=clean_text,
+                output_path=temp_base,
+                speed=speed
+            )
+            
+            # Load built-in voice embedding
+            target_embedding = self.voice_cloner.load_builtin_voice(speaker_name)
+            
+            # Apply voice cloning
+            self.voice_cloner.clone_voice(temp_base, target_embedding, output_path)
+            
+            # Clean up temporary file
+            if os.path.exists(temp_base):
+                os.remove(temp_base)
+                
+            return output_path
+            
+        except Exception as e:
+            raise TTSException(f"Built-in voice synthesis failed: {e}")
+    
+    def synthesize_with_custom_voice(self, text: str, reference_audio_data: bytes,
+                                   file_extension: str, output_path: str) -> str:
+        """
+        Synthesize speech using a custom voice from reference audio
+        
+        Args:
+            text: Text to synthesize
+            reference_audio_data: Raw audio data for voice cloning
+            file_extension: File extension of reference audio
+            output_path: Output audio file path
+            
+        Returns:
+            Path to generated audio file
+        """
+        try:
+            # Parse text tags
+            clean_text, emotion, speed, pitch = self.text_processor.parse_note_text_tags(text)
+            
+            # Generate base TTS audio
+            temp_base = f"temp_base_{int(time.time())}.wav"
+            self.melo_engine.synthesize_to_file(
+                text=clean_text,
+                output_path=temp_base,
+                speed=speed
+            )
+            
+            # Extract voice embedding from reference audio
+            target_embedding = self.voice_cloner.extract_voice_from_audio(
+                reference_audio_data, file_extension
+            )
+            
+            # Apply voice cloning
+            self.voice_cloner.clone_voice(temp_base, target_embedding, output_path)
+            
+            # Clean up temporary file
+            if os.path.exists(temp_base):
+                os.remove(temp_base)
+                
+            return output_path
+            
+        except Exception as e:
+            raise TTSException(f"Custom voice synthesis failed: {e}")
+    
+    def synthesize_base_only(self, text: str, output_path: str, speed: float = 1.0) -> str:
+        """
+        Synthesize speech using only MeloTTS (no voice cloning)
+        
+        Args:
+            text: Text to synthesize
+            output_path: Output audio file path
+            speed: Speech speed
+            
+        Returns:
+            Path to generated audio file
+        """
+        try:
+            clean_text, emotion, speed_parsed, pitch = self.text_processor.parse_note_text_tags(text)
+            actual_speed = speed_parsed if speed_parsed != 1.0 else speed
+            
+            return self.melo_engine.synthesize_to_file(
+                text=clean_text,
+                output_path=output_path,
+                speed=actual_speed
+            )
+            
+        except Exception as e:
+            raise TTSException(f"Base TTS synthesis failed: {e}")
+    
+    def create_silence(self, output_path: str, duration_seconds: float = 1.0) -> str:
+        """
+        Create a silent audio file
+        
+        Args:
+            output_path: Output audio file path
+            duration_seconds: Duration of silence in seconds
+            
+        Returns:
+            Path to generated silent audio file
+        """
+        try:
+            silence = torch.zeros(int(24000 * duration_seconds))  # 24kHz sample rate
+            sf.write(output_path, silence.numpy(), 24000)
+            return output_path
+        except Exception as e:
+            raise TTSException(f"Silence generation failed: {e}")
+    
+    def is_ready(self) -> bool:
+        """Check if both engines are ready"""
+        return self.melo_engine.is_initialized() and self.voice_cloner.is_initialized()
