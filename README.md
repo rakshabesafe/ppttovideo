@@ -213,6 +213,27 @@ The TTS system uses a modular architecture for better maintainability and testin
 - **Slide Storage**: `/MWC/data/ppt/slides` (host) → MinIO presentations bucket
 - **Environment Variables**: `PPT_OUTPUT_VOLUME` and `PPT_SLIDES_VOLUME` in `.env`
 
+### Caching for Development (Configurable via .env)
+To improve performance during development and prevent re-downloading large AI models, you can mount several cache directories from the `worker_gpu` container to your local filesystem.
+
+- **NLTK Data**: Caches tokenizers and other data for text processing.
+- **Hugging Face Models**: Caches pre-trained models like BERT.
+- **OpenVoice Repo**: Caches the cloned OpenVoice repository.
+- **OpenVoice Checkpoints**: Caches the OpenVoice model weights.
+- **LibreOffice Temp Files**: Caches temporary files generated during presentation conversion.
+
+You can configure these mappings in your `.env` file:
+```
+# Worker GPU Caches
+WORKER_GPU_NLTK_DATA=./data/nltk_data
+WORKER_GPU_HF_CACHE=./data/huggingface_cache
+WORKER_GPU_OPENVOKE_REPO=./data/OpenVoice
+WORKER_GPU_OPENVOKE_CHECKPOINTS=./data/checkpoints_v2
+
+# LibreOffice Temporary Files
+LIBREOFFICE_TMP_VOLUME=./data/libreoffice_tmp
+```
+
 ### Storage Buckets
 - `ingest`: Uploaded PPTX files
 - `voice-clones`: Voice reference audio files
