@@ -90,25 +90,32 @@ The PPT to Video Generator is a microservices-based application that converts Po
    - Validates slide count matches image count
 4. **Output**: Triggers audio synthesis for each slide
 
-### Step 2: Audio Synthesis (GPU Worker)
+### Step 2: Audio Synthesis (GPU Worker) - Modular Architecture
 1. **Task**: `app.workers.tasks_gpu.synthesize_audio`
 2. **Input**: Job ID, slide number
-3. **Process**:
-   - Downloads slide notes from MinIO
-   - Downloads voice clone reference audio
-   - Uses OpenVoice for voice synthesis
-   - Uploads synthesized audio to `presentations` bucket
-4. **Output**: Audio file per slide
+3. **Process**: Multi-layer modular architecture with fallback protection
+   - **Data Loading**: `AudioSynthesisService.load_job_data()` validates job and voice data
+   - **Text Processing**: `TextProcessor.parse_note_text_tags()` handles emotion/speed tags
+   - **TTS Synthesis**: Layered approach with multiple fallbacks:
+     - Primary: `TTSProcessor.synthesize_with_custom_voice()` (OpenVoice cloning)
+     - Fallback 1: `TTSProcessor.synthesize_with_builtin_voice()` (MeloTTS only)
+     - Fallback 2: `TTSProcessor.synthesize_base_only()` (base TTS)
+     - Fallback 3: `TTSProcessor.create_silence()` (silence audio)
+   - **Error Handling**: Custom exceptions (`TTSException`, `MeloTTSException`, `OpenVoiceException`)
+   - **Timeout Protection**: Configurable soft/hard timeouts with graceful degradation
+   - **File Upload**: `AudioSynthesisService.upload_audio_file()` handles MinIO storage
+4. **Output**: High-quality audio file per slide with guaranteed completion
 
-### Step 3: Video Assembly (CPU Worker)
-1. **Task**: `app.workers.tasks_cpu.assemble_video`
-2. **Input**: Job ID (triggered after all audio synthesis completes)
+### Step 3: Video Assembly (CPU Worker) - Enhanced Dependency Tracking
+1. **Task**: `app.workers.tasks_cpu.assemble_video_with_deps`
+2. **Input**: Job ID, list of audio task IDs (proper dependency tracking)
 3. **Process**:
-   - Downloads all slide images and audio files
-   - Uses MoviePy to create video clips (image + audio)
-   - Concatenates clips into final video
-   - Uploads to MinIO `output` bucket
-4. **Output**: Final MP4 video file
+   - **Dependency Verification**: Waits for all audio synthesis tasks to complete
+   - **Resource Collection**: Downloads all slide images and audio files from MinIO
+   - **Video Generation**: Uses MoviePy to create synchronized video clips
+   - **Assembly**: Concatenates clips into final video with proper timing
+   - **Storage**: Uploads to MinIO `output` bucket with metadata
+4. **Output**: Final MP4 video file with guaranteed audio synchronization
 
 ## MinIO Buckets
 - **`ingest`**: Original uploaded PPTX files
@@ -118,6 +125,7 @@ The PPT to Video Generator is a microservices-based application that converts Po
 
 ## Environment Variables
 ```bash
+# Database & Service Configuration
 DATABASE_URL=postgresql://user:password@postgres:5432/presentation_gen_db
 CELERY_BROKER_URL=redis://redis:6379/0
 CELERY_RESULT_BACKEND=redis://redis:6379/0
@@ -125,30 +133,88 @@ MINIO_URL=minio:9000
 MINIO_ACCESS_KEY=minioadmin
 MINIO_SECRET_KEY=minioadmin
 LIBREOFFICE_HOST=libreoffice
+
+# TTS Timeout Configuration (New in v2.3.0)
+TTS_SOFT_TIME_LIMIT=300    # Soft timeout - triggers fallback audio (5 minutes)
+TTS_HARD_TIME_LIMIT=360    # Hard timeout - kills hung tasks (6 minutes)
+
+# GPU Configuration  
+GPU_RUNTIME=nvidia         # or 'runc' for CPU-only mode
+GPU_COUNT=1               # Number of GPUs to use
+NVIDIA_VISIBLE_DEVICES=all # GPU device visibility
 ```
 
 ## Key File Locations
+
+### Core Application
 - **Main API**: `/app/main.py`
-- **Database Models**: `/app/db/models.py`
+- **Database Models**: `/app/db/models.py` (includes new `JobTask` model for task tracking)
 - **API Schemas**: `/app/schemas.py`
 - **CRUD Operations**: `/app/crud.py`
-- **CPU Worker Tasks**: `/app/workers/tasks_cpu.py`
-- **GPU Worker Tasks**: `/app/workers/tasks_gpu.py`
+
+### Worker System (Enhanced in v2.3.0)
+- **CPU Worker Tasks**: `/app/workers/tasks_cpu.py` (enhanced dependency tracking)
+- **GPU Worker Tasks**: `/app/workers/tasks_gpu.py` (modular architecture)
+- **TTS Service Layer**: `/app/services/tts_service.py` (new modular TTS components)
+
+### Service Layer
 - **LibreOffice Service**: `/app/services/libreoffice_converter.py`
 - **MinIO Service**: `/app/services/minio_service.py`
+
+### Testing & Debugging (New in v2.3.0)
+- **TTS Isolated Tests**: `/test_tts_isolated.py`
+- **TTS Component Tests**: `/tests/test_tts_components.py`
+- **Integration Test Runner**: `/test_tts_components_runner.py`
+
+### Configuration
 - **Docker Configuration**: `/docker-compose.yml`
+- **Environment Template**: `/.env.example`
 
-## Celery Task Coordination
-The system uses Celery for async task processing with task chaining:
-1. `decompose_presentation` → triggers multiple `synthesize_audio` tasks
-2. All `synthesize_audio` tasks → triggers `assemble_video`
-3. Task coordination uses countdown delays (30 seconds) to ensure audio completion
+## Celery Task Coordination (Enhanced in v2.3.0)
 
-## Common Debugging Steps
+### Task Flow
+1. **`decompose_presentation`** → triggers multiple **`synthesize_audio`** tasks
+2. All **`synthesize_audio`** tasks → triggers **`assemble_video_with_deps`**
+3. **Enhanced Dependency Tracking**: Proper task ID tracking instead of hardcoded delays
+
+### Task State Management
+- **`JobTask` Model**: Tracks individual task status, progress, and errors
+- **Granular Status Updates**: Real-time progress monitoring per task
+- **Error Isolation**: Individual task failures don't crash entire job
+- **Timeout Handling**: Configurable soft/hard timeouts with fallback mechanisms
+
+### Coordination Improvements
+- **Dependency Lists**: Video assembly waits for specific audio task completions
+- **Progress Tracking**: Detailed progress messages for user feedback  
+- **Failure Recovery**: Multi-layer fallbacks ensure pipeline completion
+
+## Common Debugging Steps (Updated for v2.3.0)
+
+### General Issues
 1. **Login Issues**: Verify correct port (18000) and user exists in database
 2. **Upload Failures**: Check MinIO storage space and bucket permissions  
-3. **Job Failures**: Check worker logs, Java installation, and LibreOffice service
-4. **Database Issues**: Verify PostgreSQL connection and table creation
+3. **Database Issues**: Verify PostgreSQL connection and table creation
+
+### TTS-Specific Debugging (New)
+4. **TTS Hangs/Timeouts**: 
+   - Check timeout configuration in `.env`
+   - Verify BERT model pre-caching: `docker exec ppt-worker_gpu python -c "from transformers import BertTokenizer; print('BERT OK')"`
+   - Run isolated TTS tests: `docker exec ppt-worker_gpu python test_tts_isolated.py`
+
+5. **Audio Synthesis Failures**:
+   - Check GPU worker logs: `docker-compose logs worker_gpu`
+   - Test TTS components: `docker exec ppt-worker_gpu python test_tts_components_runner.py`
+   - Monitor fallback behavior: `docker logs ppt-worker_gpu | grep -E "(fallback|timeout|TTS)"`
+
+6. **Job Stuck in Processing**:
+   - Check `JobTask` table: `SELECT * FROM job_tasks WHERE status='running' ORDER BY started_at;`
+   - Verify task dependencies: Look for orphaned or hung tasks
+   - Review worker concurrency settings
+
+### Performance Issues
+7. **Slow Processing**: Check GPU availability and worker resource allocation
+8. **Memory Issues**: Monitor Docker container resource usage
+9. **Storage Full**: Use cleanup APIs to remove old jobs and temporary files
 
 ## Dependencies
 - **OpenVoice**: AI voice synthesis (GPU worker)
@@ -179,5 +245,63 @@ The system uses Celery for async task processing with task chaining:
 - Video processing is CPU intensive
 - Voice synthesis requires GPU resources
 - Large presentation files may timeout
+
+## TTS Modular Architecture (New in v2.3.0)
+
+### Core TTS Components
+
+#### `TTSProcessor` (Main Orchestrator)
+```python
+class TTSProcessor:
+    def initialize()                               # Lazy model loading
+    def is_ready()                                # Check initialization status
+    def synthesize_with_builtin_voice()           # Built-in speaker synthesis
+    def synthesize_with_custom_voice()            # Custom voice cloning
+    def synthesize_base_only()                    # Fallback base TTS
+    def create_silence()                          # Ultimate fallback
+```
+
+#### `MeloTTSEngine` (Base TTS)
+```python
+class MeloTTSEngine:
+    def initialize()                              # Load MeloTTS models
+    def synthesize_to_file()                      # Pure TTS synthesis
+    def is_ready()                               # Check model availability
+```
+
+#### `OpenVoiceCloner` (Voice Cloning)
+```python
+class OpenVoiceCloner:
+    def initialize()                              # Load OpenVoice models
+    def extract_speaker_embedding()               # Voice analysis
+    def clone_voice()                            # Apply voice conversion
+    def is_ready()                               # Check model availability
+```
+
+#### `TextProcessor` (Text Preprocessing)
+```python
+class TextProcessor:
+    @staticmethod
+    def parse_note_text_tags()                    # Parse emotion/speed tags
+    def clean_text_for_tts()                     # Text sanitization
+```
+
+### Custom Exception Hierarchy
+- **`TTSException`**: Base exception for all TTS errors
+- **`MeloTTSException`**: MeloTTS-specific errors (model loading, synthesis)
+- **`OpenVoiceException`**: OpenVoice-specific errors (cloning, embedding)
+
+### Testing Framework
+- **`test_tts_isolated.py`**: Isolated component testing with timeout simulation
+- **`tests/test_tts_components.py`**: Unit tests for each modular component
+- **`test_tts_components_runner.py`**: Integration tests for Docker environment
+
+This modular approach enables:
+- **Independent Testing**: Each component can be tested in isolation
+- **Graceful Degradation**: Multiple fallback layers ensure reliability
+- **Better Error Handling**: Precise error identification and recovery
+- **Maintainable Code**: Clear separation of concerns and responsibilities
+
+---
 
 This documentation provides AI agents with comprehensive technical details for debugging, extending, and maintaining the PPT to Video Generator application.

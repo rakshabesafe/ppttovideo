@@ -26,6 +26,9 @@ RUN python -m unidic download
 # Download required NLTK data for MeloTTS
 RUN python -c "import nltk; nltk.download('averaged_perceptron_tagger_eng'); nltk.download('averaged_perceptron_tagger'); nltk.download('cmudict')"
 
+# Pre-download BERT model for MeloTTS to prevent runtime hanging
+RUN python -c "from transformers import BertTokenizer, BertModel; BertTokenizer.from_pretrained('bert-base-uncased'); BertModel.from_pretrained('bert-base-uncased'); print('BERT model cached successfully')"
+
 # Install OpenVoice and its dependencies  
 RUN git clone https://github.com/myshell-ai/OpenVoice.git /OpenVoice
 # Install OpenVoice from the cloned repo

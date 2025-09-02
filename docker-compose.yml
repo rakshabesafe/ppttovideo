@@ -116,6 +116,8 @@ services:
       - MINIO_SECRET_KEY=${MINIO_ROOT_PASSWORD:-minioadmin}
       - NVIDIA_VISIBLE_DEVICES=${NVIDIA_VISIBLE_DEVICES:-all}
       - NVIDIA_DRIVER_CAPABILITIES=${NVIDIA_DRIVER_CAPABILITIES:-compute,utility}
+      - TTS_SOFT_TIME_LIMIT=${TTS_SOFT_TIME_LIMIT:-300}
+      - TTS_HARD_TIME_LIMIT=${TTS_HARD_TIME_LIMIT:-360}
     runtime: ${GPU_RUNTIME:-runc}
     deploy:
       resources:

@@ -54,6 +54,10 @@ POSTGRES_PASSWORD=password
 POSTGRES_DB=presentation_gen_db
 MINIO_ROOT_USER=minioadmin
 MINIO_ROOT_PASSWORD=minioadmin
+
+# TTS Timeout Configuration (optional)
+TTS_SOFT_TIME_LIMIT=300    # Soft timeout in seconds (5 minutes default)
+TTS_HARD_TIME_LIMIT=360    # Hard timeout in seconds (6 minutes default)
 ```
 
 3. **Start the application**
@@ -178,11 +182,21 @@ docker exec ppt-api python -m app.cli.cleanup_jobs --stats
 ### Service Details
 - **`ppt-api`**: FastAPI web server and REST API endpoints
 - **`ppt-worker-cpu`**: Video processing and presentation decomposition  
-- **`ppt-worker-gpu`**: AI voice synthesis using OpenVoice V2
+- **`ppt-worker-gpu`**: AI voice synthesis using OpenVoice V2 with modular TTS architecture
 - **`ppt-libreoffice`**: PowerPoint to image conversion service
 - **`ppt-postgres`**: Database for users, jobs, and metadata
 - **`ppt-redis`**: Task queue and message broker
 - **`ppt-minio`**: File storage (presentations, audio, videos)
+
+### TTS Architecture Components
+The TTS system uses a modular architecture for better maintainability and testing:
+
+- **`TTSProcessor`**: High-level orchestrator for TTS operations
+- **`MeloTTSEngine`**: Base text-to-speech synthesis using MeloTTS
+- **`OpenVoiceCloner`**: Voice cloning and tone color conversion
+- **`TextProcessor`**: Parsing of emotion tags and text preprocessing
+- **`AudioSynthesisService`**: Complete audio synthesis pipeline management
+- **Custom Exceptions**: `TTSException`, `MeloTTSException`, `OpenVoiceException` for precise error handling
 
 ## 🔧 Configuration
 
@@ -230,6 +244,26 @@ docker exec ppt-api python -m app.cli.cleanup_jobs --stats
 - View logs: `docker-compose logs worker_cpu worker_gpu`
 - Verify PPTX has slide notes
 - Check LibreOffice service: `docker-compose logs libreoffice`
+
+**❌ TTS audio synthesis hangs/fails**
+- Check GPU worker logs: `docker-compose logs worker_gpu`
+- Verify timeout settings in `.env`:
+  ```bash
+  TTS_SOFT_TIME_LIMIT=300  # 5 minutes
+  TTS_HARD_TIME_LIMIT=360  # 6 minutes
+  ```
+- Test TTS components individually:
+  ```bash
+  # Run TTS component tests
+  docker exec ppt-worker_gpu python test_tts_components_runner.py
+  
+  # Test isolated TTS synthesis
+  docker exec ppt-worker_gpu python test_tts_isolated.py
+  ```
+- Check BERT model caching:
+  ```bash
+  docker exec ppt-worker_gpu python -c "from transformers import BertTokenizer; print('BERT models cached')"
+  ```
 
 **❌ Out of storage**
 - Use cleanup API: `curl -X POST "http://localhost:18000/api/cleanup/execute" -d '{"days_old": 7}'`
@@ -307,6 +341,30 @@ SELECT id, status, created_at FROM presentation_jobs ORDER BY created_at DESC;
 This project is licensed under the MIT License.
 
 ## 🆕 Recent Updates
+
+### v2.3.0 - Enhanced TTS Audio Generation System 🎵
+- ✅ **Modular TTS Architecture**: Complete refactoring of TTS synthesis system
+  - Separated MeloTTS engine from OpenVoice cloning for better testing
+  - Created dedicated service classes (`TTSProcessor`, `AudioSynthesisService`)
+  - Improved error handling with custom exceptions (`TTSException`, `MeloTTSException`)
+  - Testable components with clear separation of concerns
+- ✅ **Timeout Protection**: Configurable timeout system prevents TTS hanging
+  - Soft timeout (default 5 minutes): Creates fallback silence audio
+  - Hard timeout (default 6 minutes): Kills hung tasks completely
+  - Environment variable configuration: `TTS_SOFT_TIME_LIMIT`, `TTS_HARD_TIME_LIMIT`
+  - Multiple fallback layers: voice cloning → base TTS → silence
+- ✅ **BERT Model Pre-caching**: Eliminates TTS initialization hangs
+  - Pre-downloads BERT models during Docker build process
+  - Prevents runtime hanging on first TTS synthesis
+  - Faster subsequent processing with cached models
+- ✅ **Improved Task Dependencies**: Fixed video assembly timing issues
+  - Replaced hardcoded delays with proper dependency tracking
+  - Video assembly now waits for all audio synthesis to complete
+  - Better job status tracking and progress monitoring
+- ✅ **Testing Framework**: Comprehensive TTS testing tools
+  - Isolated unit tests for each TTS component
+  - Integration test runner for Docker environments
+  - Timeout simulation and error scenario testing
 
 ### v2.2.0 - Cleanup & Management Features
 - ✅ **Cleanup Service**: Automated cleanup of old jobs and associated files
