@@ -206,7 +206,20 @@ def assemble_video(image_paths_from_libreoffice, job_id: int):
                 image_local_paths[slide_num] = local_path
 
             # 2. Download audio files
-            audio_files = minio_service.client.list_objects("presentations", prefix=f"{job_id}/audio/")
+            # Extract job UUID from image paths (e.g., "presentations/uuid/images/slide-1.png" -> "uuid")
+            if image_paths_from_libreoffice:
+                first_image_path = image_paths_from_libreoffice[0].lstrip('/')
+                # Split: presentations/uuid/images/slide-1.png -> ["presentations", "uuid", "images", "slide-1.png"] 
+                path_parts = first_image_path.split('/')
+                if len(path_parts) >= 2:
+                    job_uuid = path_parts[1]  # Extract UUID from path
+                else:
+                    raise Exception(f"Cannot extract UUID from image path: {first_image_path}")
+            else:
+                raise Exception("No image paths provided - cannot determine job UUID")
+            
+            print(f"Using job UUID for audio lookup: {job_uuid}")
+            audio_files = minio_service.client.list_objects("presentations", prefix=f"{job_uuid}/audio/")
             audio_paths = {}
 
             for aud in audio_files:
