@@ -93,7 +93,7 @@ def decompose_presentation(job_id: int):
         
         # Schedule video assembly with dependency tracking to wait for audio synthesis completion
         print(f"Scheduling video assembly for job {job_id} with dependency tracking")
-        assemble_video_with_deps.apply_async(args=(image_paths, job_id, [result.id for result in audio_task_results]))
+        assemble_video_with_deps.apply_async(args=(image_paths, job_id, [result.id for result in audio_task_results]), queue='cpu_tasks')
 
         crud.update_job_status(db, job_id, "synthesizing_audio", current_stage="synthesizing_audio")
 
