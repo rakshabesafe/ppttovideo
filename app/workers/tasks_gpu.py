@@ -195,10 +195,15 @@ class AudioSynthesisService:
             pptx_filename = os.path.basename(data.job.s3_pptx_path)
             job_uuid = os.path.splitext(pptx_filename)[0]  # Remove .pptx extension
             
-            output_s3_path = f"presentations/{job_uuid}/audio/slide_{data.slide_number}.wav"
+            output_s3_path = f"{job_uuid}/audio/slide_{data.slide_number}.wav"
             
             with open(audio_file_path, "rb") as audio_file:
-                self.minio_service.upload_file(audio_file, "output", output_s3_path.lstrip('/'))
+                self.minio_service.upload_file(
+                    bucket_name="presentations",
+                    object_name=output_s3_path,
+                    data=audio_file,
+                    length=os.path.getsize(audio_file_path)
+                )
             
             print(f"Audio uploaded to: {output_s3_path}")
             return output_s3_path
@@ -284,7 +289,7 @@ def synthesize_audio(self, job_id: int, slide_number: int):
             data = AudioSynthesisData(job_id, slide_number)
             data.job = crud.get_presentation_job(db, job_id)
             if data.job:
-                audio_service.upload_audio_file(data, fallback_path)
+                output_s3_path = audio_service.upload_audio_file(data, fallback_path)
             
             crud.update_task_status(
                 db, 
@@ -320,7 +325,7 @@ def synthesize_audio(self, job_id: int, slide_number: int):
             data = AudioSynthesisData(job_id, slide_number)
             data.job = crud.get_presentation_job(db, job_id)
             if data.job:
-                audio_service.upload_audio_file(data, fallback_path)
+                output_s3_path = audio_service.upload_audio_file(data, fallback_path)
             
             return f"Fallback silence audio created for slide {slide_number} due to TTS error"
             
