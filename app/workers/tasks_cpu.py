@@ -91,10 +91,9 @@ def decompose_presentation(job_id: int):
         print(f"Image paths for job {job_id}: {image_paths}")
         print(f"Created {len(audio_task_results)} audio synthesis tasks")
         
-        # Schedule video assembly with a short delay to allow audio synthesis to complete
-        # Since TTS bypass completes in ~0.03s, a 5-second delay is more than sufficient
-        print(f"Scheduling video assembly for job {job_id} with 5-second delay")
-        assemble_video.apply_async(args=(image_paths, job_id), countdown=5)
+        # Schedule video assembly with dependency tracking to wait for audio synthesis completion
+        print(f"Scheduling video assembly for job {job_id} with dependency tracking")
+        assemble_video_with_deps.apply_async(args=(image_paths, job_id, [result.id for result in audio_task_results]))
 
         crud.update_job_status(db, job_id, "synthesizing_audio", current_stage="synthesizing_audio")
 

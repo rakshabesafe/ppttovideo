@@ -19,6 +19,10 @@ sys.path.append('/src/melotts')
 # Delay import of MeloTTS to handle initialization issues
 base_tts = None
 
+# Configurable timeouts via environment variables
+TTS_SOFT_TIME_LIMIT = int(os.getenv('TTS_SOFT_TIME_LIMIT', '300'))  # 5 minutes default
+TTS_HARD_TIME_LIMIT = int(os.getenv('TTS_HARD_TIME_LIMIT', '360'))  # 6 minutes default
+
 # Load models once when the worker starts
 # This is a simplification. In a real scenario, model loading should be more robust.
 device = "cuda:0" if torch.cuda.is_available() else "cpu"
@@ -102,11 +106,12 @@ def parse_note_text_tags(text):
     
     return text, emotion, speed, pitch
 
-@celery_app.task(name="app.workers.tasks_gpu.synthesize_audio")
-def synthesize_audio(job_id: int, slide_number: int):
+@celery_app.task(name="app.workers.tasks_gpu.synthesize_audio", bind=True, soft_time_limit=TTS_SOFT_TIME_LIMIT, time_limit=TTS_HARD_TIME_LIMIT)
+def synthesize_audio(self, job_id: int, slide_number: int):
     """
     Generates audio for a single slide's notes using a cloned voice.
     """
+    from celery.exceptions import SoftTimeLimitExceeded
     db = SessionLocal()
     try:
         # Update task status to running
@@ -311,6 +316,32 @@ def synthesize_audio(job_id: int, slide_number: int):
         
         return f"Audio for slide {slide_number} of job {job_id} created."
 
+    except SoftTimeLimitExceeded:
+        # Handle soft timeout - create a placeholder audio file
+        print(f"TTS synthesis timed out for job {job_id}, slide {slide_number}. Creating placeholder audio.")
+        try:
+            # Create 3 seconds of silence as fallback
+            silence = torch.zeros(3 * 24000)  # 3 seconds at 24kHz
+            save_path = f"temp_output_{job_id}_{slide_number}.wav"
+            sf.write(save_path, silence.numpy(), 24000)
+            
+            # Upload to S3
+            output_s3_path = f"presentations/{job.s3_uuid}/audio/slide_{slide_number}.wav"
+            with open(save_path, "rb") as audio_file:
+                minio_service.upload_file(audio_file, "output", output_s3_path.lstrip('/'))
+            
+            crud.update_task_status(db, celery_task_id=self.request.id, 
+                                   status="completed", progress_message=f"Audio synthesis timed out - used placeholder audio for slide {slide_number}")
+            
+            # Clean up
+            if os.path.exists(save_path):
+                os.remove(save_path)
+                
+            return f"Timeout fallback audio for slide {slide_number} of job {job_id} created."
+        except Exception as fallback_error:
+            print(f"Fallback audio creation failed: {fallback_error}")
+            raise SoftTimeLimitExceeded("TTS synthesis timed out and fallback failed")
+            
     except Exception as e:
         # Mark task as failed
         crud.update_task_status(db, celery_task_id=celery_app.current_task.request.id, 
