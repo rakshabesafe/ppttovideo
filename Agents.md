@@ -142,6 +142,13 @@ TTS_HARD_TIME_LIMIT=360    # Hard timeout - kills hung tasks (6 minutes)
 GPU_RUNTIME=nvidia         # or 'runc' for CPU-only mode
 GPU_COUNT=1               # Number of GPUs to use
 NVIDIA_VISIBLE_DEVICES=all # GPU device visibility
+
+# Volume Mapping for Caching
+WORKER_GPU_NLTK_DATA=./data/nltk_data
+WORKER_GPU_HF_CACHE=./data/huggingface_cache
+WORKER_GPU_OPENVOKE_REPO=./data/OpenVoice
+WORKER_GPU_OPENVOKE_CHECKPOINTS=./data/checkpoints_v2
+LIBREOFFICE_TMP_VOLUME=./data/libreoffice_tmp
 ```
 
 ## Key File Locations
