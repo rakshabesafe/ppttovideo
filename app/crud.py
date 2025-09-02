@@ -49,15 +49,76 @@ def create_presentation_job(db: Session, job: schemas.PresentationJobCreate, ppt
 def get_presentation_job(db: Session, job_id: int):
     return db.query(models.PresentationJob).filter(models.PresentationJob.id == job_id).first()
 
-def update_job_status(db: Session, job_id: int, status: str, video_path: str = None):
+def update_job_status(db: Session, job_id: int, status: str, video_path: str = None, error_message: str = None, current_stage: str = None):
     db_job = get_presentation_job(db, job_id)
     if db_job:
         db_job.status = status
         if video_path:
             db_job.s3_video_path = video_path
+        if error_message:
+            db_job.error_message = error_message
+        if current_stage:
+            db_job.current_stage = current_stage
         db.commit()
         db.refresh(db_job)
     return db_job
+
+def update_job_slides(db: Session, job_id: int, num_slides: int):
+    db_job = get_presentation_job(db, job_id)
+    if db_job:
+        db_job.num_slides = num_slides
+        db.commit()
+        db.refresh(db_job)
+    return db_job
+
+# JobTask CRUD
+def create_job_task(db: Session, job_id: int, task_type: str, slide_number: int = None, celery_task_id: str = None):
+    db_task = models.JobTask(
+        job_id=job_id,
+        task_type=task_type,
+        slide_number=slide_number,
+        celery_task_id=celery_task_id,
+        status="pending"
+    )
+    db.add(db_task)
+    db.commit()
+    db.refresh(db_task)
+    return db_task
+
+def update_task_status(db: Session, task_id: int = None, celery_task_id: str = None, status: str = None, 
+                      progress_message: str = None, error_message: str = None, set_celery_task_id: str = None):
+    import datetime
+    
+    if task_id:
+        db_task = db.query(models.JobTask).filter(models.JobTask.id == task_id).first()
+    elif celery_task_id:
+        db_task = db.query(models.JobTask).filter(models.JobTask.celery_task_id == celery_task_id).first()
+    else:
+        return None
+    
+    if db_task:
+        if status:
+            db_task.status = status
+            if status == "running" and not db_task.started_at:
+                db_task.started_at = datetime.datetime.utcnow()
+            elif status in ["completed", "failed", "cancelled"]:
+                db_task.completed_at = datetime.datetime.utcnow()
+        
+        if progress_message:
+            db_task.progress_message = progress_message
+        if error_message:
+            db_task.error_message = error_message
+        if set_celery_task_id:
+            db_task.celery_task_id = set_celery_task_id
+            
+        db.commit()
+        db.refresh(db_task)
+    return db_task
+
+def get_job_tasks(db: Session, job_id: int):
+    return db.query(models.JobTask).filter(models.JobTask.job_id == job_id).order_by(
+        models.JobTask.task_type, models.JobTask.slide_number.asc().nullslast()
+    ).all()
 
 def get_presentation_jobs_by_status(db: Session, statuses: list, skip: int = 0, limit: int = 100):
     """Get presentation jobs by status list"""

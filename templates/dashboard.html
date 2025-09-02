@@ -1,0 +1,441 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Operational Dashboard - PPT to Video Generator</title>
+    <style>
+        body { 
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            margin: 0; padding: 0; background: #f5f5f5; 
+        }
+        .header {
+            background: #2c3e50; color: white; padding: 15px 20px;
+            display: flex; justify-content: space-between; align-items: center;
+        }
+        .header h1 { margin: 0; font-size: 24px; }
+        .main-content { padding: 20px; max-width: 1400px; margin: 0 auto; }
+        
+        /* Dashboard Grid */
+        .dashboard-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; margin-bottom: 30px; }
+        .dashboard-card {
+            background: white; border-radius: 8px; padding: 20px; 
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1); border-left: 4px solid #3498db;
+        }
+        .dashboard-card h3 { margin: 0 0 15px 0; color: #2c3e50; }
+        
+        /* System Status */
+        .status-indicators { display: flex; gap: 15px; flex-wrap: wrap; }
+        .status-indicator {
+            padding: 8px 16px; border-radius: 20px; font-size: 14px; font-weight: 500;
+            display: flex; align-items: center; gap: 8px;
+        }
+        .status-healthy { background: #d4edda; color: #155724; }
+        .status-degraded { background: #fff3cd; color: #856404; }
+        .status-offline { background: #f8d7da; color: #721c24; }
+        .status-dot { width: 8px; height: 8px; border-radius: 50%; }
+        
+        /* Job List */
+        .job-table {
+            width: 100%; border-collapse: collapse; background: white; border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1); overflow: hidden;
+        }
+        .job-table th, .job-table td { padding: 12px; text-align: left; border-bottom: 1px solid #e9ecef; }
+        .job-table th { background: #f8f9fa; font-weight: 600; color: #495057; }
+        .job-table tbody tr { cursor: pointer; transition: background 0.2s; }
+        .job-table tbody tr:hover { background: #f8f9fa; }
+        
+        /* Status Badges */
+        .status-badge {
+            padding: 4px 8px; border-radius: 12px; font-size: 12px; font-weight: 500;
+            display: inline-block; min-width: 60px; text-align: center;
+        }
+        .status-pending { background: #e9ecef; color: #6c757d; }
+        .status-processing_slides { background: #fff3cd; color: #856404; }
+        .status-synthesizing_audio { background: #cce5ff; color: #004085; }
+        .status-assembling_video { background: #d1ecf1; color: #0c5460; }
+        .status-completed { background: #d4edda; color: #155724; }
+        .status-failed { background: #f8d7da; color: #721c24; }
+        
+        /* Job Detail Modal */
+        .modal { 
+            display: none; position: fixed; z-index: 1000; left: 0; top: 0; 
+            width: 100%; height: 100%; background: rgba(0,0,0,0.5);
+        }
+        .modal-content {
+            background: white; margin: 2% auto; padding: 0; width: 90%; max-width: 1000px;
+            border-radius: 8px; box-shadow: 0 4px 20px rgba(0,0,0,0.3); max-height: 90vh; overflow: auto;
+        }
+        .modal-header {
+            padding: 20px; border-bottom: 1px solid #e9ecef;
+            display: flex; justify-content: space-between; align-items: center;
+            background: #f8f9fa; border-radius: 8px 8px 0 0;
+        }
+        .modal-body { padding: 20px; }
+        .close { font-size: 28px; font-weight: bold; cursor: pointer; color: #aaa; }
+        .close:hover { color: #000; }
+        
+        /* Task Timeline */
+        .task-timeline { margin: 20px 0; }
+        .task-stage { margin: 15px 0; padding: 15px; border-radius: 6px; border-left: 4px solid #dee2e6; }
+        .task-stage.active { border-left-color: #007bff; background: #f0f8ff; }
+        .task-stage.completed { border-left-color: #28a745; background: #f8fff9; }
+        .task-stage.failed { border-left-color: #dc3545; background: #fff8f8; }
+        
+        .task-list { margin-top: 10px; }
+        .task-item {
+            display: flex; justify-content: space-between; align-items: center;
+            padding: 8px 12px; margin: 4px 0; background: white; border-radius: 4px;
+            border: 1px solid #e9ecef;
+        }
+        .task-item.running { border-color: #007bff; background: #f0f8ff; }
+        .task-item.completed { border-color: #28a745; background: #f8fff9; }
+        .task-item.failed { border-color: #dc3545; background: #fff8f8; }
+        
+        /* Progress Indicators */
+        .progress-bar {
+            background: #e9ecef; height: 8px; border-radius: 4px; overflow: hidden; margin: 10px 0;
+        }
+        .progress-fill {
+            height: 100%; background: #007bff; transition: width 0.3s ease;
+        }
+        
+        /* Refresh Controls */
+        .refresh-controls {
+            display: flex; gap: 10px; align-items: center; margin-bottom: 20px;
+        }
+        .btn {
+            padding: 8px 16px; border: none; border-radius: 4px; cursor: pointer;
+            font-size: 14px; font-weight: 500; transition: background 0.2s;
+        }
+        .btn-primary { background: #007bff; color: white; }
+        .btn-primary:hover { background: #0056b3; }
+        .btn-secondary { background: #6c757d; color: white; }
+        .btn-danger { background: #dc3545; color: white; }
+        
+        .auto-refresh { display: flex; align-items: center; gap: 8px; }
+        
+        /* Worker Status */
+        .worker-list { list-style: none; padding: 0; margin: 0; }
+        .worker-item {
+            display: flex; justify-content: space-between; align-items: center;
+            padding: 10px; margin: 5px 0; background: #f8f9fa; border-radius: 4px;
+        }
+        .worker-online { border-left: 4px solid #28a745; }
+        .worker-offline { border-left: 4px solid #dc3545; }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <h1>Operational Dashboard</h1>
+        <div class="refresh-controls">
+            <div class="auto-refresh">
+                <input type="checkbox" id="autoRefresh" checked>
+                <label for="autoRefresh">Auto-refresh (5s)</label>
+            </div>
+            <button class="btn btn-primary" onclick="refreshDashboard()">Refresh Now</button>
+            <button class="btn btn-secondary" onclick="window.location.href='/'">Back to Main</button>
+        </div>
+    </div>
+    
+    <div class="main-content">
+        <!-- System Overview -->
+        <div class="dashboard-grid">
+            <div class="dashboard-card">
+                <h3>System Health</h3>
+                <div id="systemHealth" class="status-indicators">
+                    <div class="status-indicator">Loading...</div>
+                </div>
+            </div>
+            
+            <div class="dashboard-card">
+                <h3>Workers Status</h3>
+                <ul id="workersList" class="worker-list">
+                    <li>Loading worker status...</li>
+                </ul>
+            </div>
+        </div>
+        
+        <!-- Active Jobs -->
+        <div class="dashboard-card">
+            <h3>Active Jobs</h3>
+            <table class="job-table" id="activeJobsTable">
+                <thead>
+                    <tr>
+                        <th>Job ID</th>
+                        <th>Status</th>
+                        <th>Current Stage</th>
+                        <th>Slides</th>
+                        <th>Started</th>
+                        <th>Updated</th>
+                        <th>Actions</th>
+                    </tr>
+                </thead>
+                <tbody id="activeJobsBody">
+                    <tr><td colspan="7" style="text-align: center; padding: 20px;">Loading jobs...</td></tr>
+                </tbody>
+            </table>
+        </div>
+    </div>
+    
+    <!-- Job Detail Modal -->
+    <div id="jobModal" class="modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h2 id="modalTitle">Job Details</h2>
+                <span class="close" onclick="closeJobModal()">&times;</span>
+            </div>
+            <div class="modal-body" id="modalBody">
+                Loading job details...
+            </div>
+        </div>
+    </div>
+
+    <script>
+        let autoRefreshInterval = null;
+        
+        // Initialize dashboard
+        document.addEventListener('DOMContentLoaded', function() {
+            refreshDashboard();
+            setupAutoRefresh();
+        });
+        
+        function setupAutoRefresh() {
+            const checkbox = document.getElementById('autoRefresh');
+            
+            function updateAutoRefresh() {
+                if (checkbox.checked && !autoRefreshInterval) {
+                    autoRefreshInterval = setInterval(refreshDashboard, 5000);
+                } else if (!checkbox.checked && autoRefreshInterval) {
+                    clearInterval(autoRefreshInterval);
+                    autoRefreshInterval = null;
+                }
+            }
+            
+            checkbox.addEventListener('change', updateAutoRefresh);
+            updateAutoRefresh();
+        }
+        
+        async function refreshDashboard() {
+            try {
+                // Update system health
+                const healthResponse = await fetch('/api/dashboard/system/health');
+                const health = await healthResponse.json();
+                updateSystemHealth(health);
+                
+                // Update worker status
+                const workersResponse = await fetch('/api/dashboard/workers');
+                const workersData = await workersResponse.json();
+                updateWorkerStatus(workersData);
+                
+                // Update active jobs
+                const jobsResponse = await fetch('/api/dashboard/jobs/active');
+                const jobs = await jobsResponse.json();
+                updateActiveJobs(jobs);
+                
+            } catch (error) {
+                console.error('Error refreshing dashboard:', error);
+            }
+        }
+        
+        function updateSystemHealth(health) {
+            const container = document.getElementById('systemHealth');
+            const overallClass = health.status === 'healthy' ? 'status-healthy' : 
+                               health.status === 'degraded' ? 'status-degraded' : 'status-offline';
+            
+            container.innerHTML = `
+                <div class="status-indicator ${overallClass}">
+                    <div class="status-dot" style="background: ${health.status === 'healthy' ? '#28a745' : health.status === 'degraded' ? '#ffc107' : '#dc3545'}"></div>
+                    System ${health.status}
+                </div>
+                <div class="status-indicator ${health.database === 'healthy' ? 'status-healthy' : 'status-offline'}">
+                    Database: ${health.database}
+                </div>
+                <div class="status-indicator">CPU Workers: ${health.cpu_workers}</div>
+                <div class="status-indicator">GPU Workers: ${health.gpu_workers}</div>
+            `;
+        }
+        
+        function updateWorkerStatus(workersData) {
+            const container = document.getElementById('workersList');
+            
+            if (workersData.workers.length === 0) {
+                container.innerHTML = '<li class="worker-item worker-offline">No workers detected</li>';
+                return;
+            }
+            
+            const workersHtml = workersData.workers.map(worker => {
+                const statusClass = worker.status === 'online' ? 'worker-online' : 'worker-offline';
+                const activeCount = worker.active_tasks.length;
+                const queuedCount = worker.queued_tasks.length;
+                
+                return `
+                    <li class="worker-item ${statusClass}">
+                        <div>
+                            <strong>${worker.worker_name}</strong>
+                            <span class="status-badge status-${worker.status === 'online' ? 'completed' : 'failed'}">
+                                ${worker.status}
+                            </span>
+                        </div>
+                        <div>Active: ${activeCount} | Queued: ${queuedCount}</div>
+                    </li>
+                `;
+            }).join('');
+            
+            container.innerHTML = workersHtml;
+        }
+        
+        function updateActiveJobs(jobs) {
+            const tbody = document.getElementById('activeJobsBody');
+            
+            if (jobs.length === 0) {
+                tbody.innerHTML = '<tr><td colspan="7" style="text-align: center; padding: 20px;">No active jobs</td></tr>';
+                return;
+            }
+            
+            const jobsHtml = jobs.map(job => {
+                const startedDate = new Date(job.created_at).toLocaleString();
+                const updatedDate = new Date(job.updated_at).toLocaleString();
+                
+                return `
+                    <tr onclick="showJobDetails(${job.id})">
+                        <td>#${job.id}</td>
+                        <td><span class="status-badge status-${job.status}">${job.status}</span></td>
+                        <td><span class="status-badge status-${job.current_stage}">${job.current_stage}</span></td>
+                        <td>${job.num_slides || 'N/A'}</td>
+                        <td>${startedDate}</td>
+                        <td>${updatedDate}</td>
+                        <td>
+                            <button class="btn btn-danger" onclick="event.stopPropagation(); cancelJob(${job.id})" 
+                                    ${job.status === 'completed' || job.status === 'failed' ? 'disabled' : ''}>
+                                Cancel
+                            </button>
+                        </td>
+                    </tr>
+                `;
+            }).join('');
+            
+            tbody.innerHTML = jobsHtml;
+        }
+        
+        async function showJobDetails(jobId) {
+            try {
+                const response = await fetch(`/api/dashboard/job/${jobId}`);
+                const job = await response.json();
+                
+                document.getElementById('modalTitle').textContent = `Job #${job.id} Details`;
+                
+                // Calculate progress
+                const totalTasks = job.tasks.length;
+                const completedTasks = job.tasks.filter(t => t.status === 'completed').length;
+                const failedTasks = job.tasks.filter(t => t.status === 'failed').length;
+                const runningTasks = job.tasks.filter(t => t.status === 'running').length;
+                const progress = totalTasks > 0 ? (completedTasks / totalTasks) * 100 : 0;
+                
+                // Group tasks by type
+                const tasksByType = {};
+                job.tasks.forEach(task => {
+                    if (!tasksByType[task.task_type]) {
+                        tasksByType[task.task_type] = [];
+                    }
+                    tasksByType[task.task_type].push(task);
+                });
+                
+                let modalContent = `
+                    <div class="task-stage">
+                        <h3>Job Overview</h3>
+                        <p><strong>Status:</strong> <span class="status-badge status-${job.status}">${job.status}</span></p>
+                        <p><strong>Current Stage:</strong> <span class="status-badge status-${job.current_stage}">${job.current_stage}</span></p>
+                        <p><strong>Slides:</strong> ${job.num_slides || 'N/A'}</p>
+                        <p><strong>Created:</strong> ${new Date(job.created_at).toLocaleString()}</p>
+                        <p><strong>Updated:</strong> ${new Date(job.updated_at).toLocaleString()}</p>
+                        ${job.error_message ? `<p><strong>Error:</strong> <span style="color: #dc3545;">${job.error_message}</span></p>` : ''}
+                        
+                        <div class="progress-bar">
+                            <div class="progress-fill" style="width: ${progress}%"></div>
+                        </div>
+                        <p>Progress: ${completedTasks}/${totalTasks} tasks completed (${progress.toFixed(1)}%)</p>
+                    </div>
+                `;
+                
+                // Add task stages
+                Object.entries(tasksByType).forEach(([taskType, tasks]) => {
+                    const stageCompleted = tasks.every(t => t.status === 'completed');
+                    const stageFailed = tasks.some(t => t.status === 'failed');
+                    const stageActive = tasks.some(t => t.status === 'running');
+                    
+                    const stageClass = stageFailed ? 'failed' : stageCompleted ? 'completed' : stageActive ? 'active' : '';
+                    
+                    modalContent += `
+                        <div class="task-stage ${stageClass}">
+                            <h4>${taskType.replace('_', ' ').toUpperCase()}</h4>
+                            <div class="task-list">
+                    `;
+                    
+                    tasks.forEach(task => {
+                        const taskClass = task.status;
+                        const taskTitle = task.slide_number ? 
+                            `Slide ${task.slide_number}` : 
+                            taskType.replace('_', ' ');
+                        
+                        modalContent += `
+                            <div class="task-item ${taskClass}">
+                                <div>
+                                    <strong>${taskTitle}</strong>
+                                    ${task.progress_message ? `<br><small>${task.progress_message}</small>` : ''}
+                                    ${task.error_message ? `<br><small style="color: #dc3545;">${task.error_message}</small>` : ''}
+                                </div>
+                                <span class="status-badge status-${task.status}">${task.status}</span>
+                            </div>
+                        `;
+                    });
+                    
+                    modalContent += '</div></div>';
+                });
+                
+                document.getElementById('modalBody').innerHTML = modalContent;
+                document.getElementById('jobModal').style.display = 'block';
+                
+            } catch (error) {
+                console.error('Error loading job details:', error);
+                alert('Error loading job details');
+            }
+        }
+        
+        function closeJobModal() {
+            document.getElementById('jobModal').style.display = 'none';
+        }
+        
+        async function cancelJob(jobId) {
+            if (!confirm(`Are you sure you want to cancel job #${jobId}?`)) {
+                return;
+            }
+            
+            try {
+                const response = await fetch(`/api/dashboard/job/${jobId}/cancel`, {
+                    method: 'POST'
+                });
+                
+                if (response.ok) {
+                    alert('Job cancelled successfully');
+                    refreshDashboard();
+                } else {
+                    const error = await response.json();
+                    alert(`Error cancelling job: ${error.detail}`);
+                }
+            } catch (error) {
+                console.error('Error cancelling job:', error);
+                alert('Error cancelling job');
+            }
+        }
+        
+        // Close modal when clicking outside
+        window.onclick = function(event) {
+            const modal = document.getElementById('jobModal');
+            if (event.target === modal) {
+                modal.style.display = 'none';
+            }
+        }
+    </script>
+</body>
+</html>

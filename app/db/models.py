@@ -32,6 +32,9 @@ class PresentationJob(Base):
     status = Column(String, default="pending")
     s3_pptx_path = Column(String, nullable=False)
     s3_video_path = Column(String, nullable=True)
+    error_message = Column(String, nullable=True)
+    num_slides = Column(Integer, nullable=True)
+    current_stage = Column(String, default="pending")  # pending, decomposing, synthesizing_audio, assembling_video, completed, failed
     created_at = Column(DateTime, default=datetime.datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.datetime.utcnow, onupdate=datetime.datetime.utcnow)
 
@@ -40,3 +43,22 @@ class PresentationJob(Base):
 
     owner = relationship("User", back_populates="presentations")
     voice_clone = relationship("VoiceClone")
+    tasks = relationship("JobTask", back_populates="job")
+
+
+class JobTask(Base):
+    __tablename__ = "job_tasks"
+    
+    id = Column(Integer, primary_key=True, index=True)
+    job_id = Column(Integer, ForeignKey("presentation_jobs.id"))
+    task_type = Column(String, nullable=False)  # decomposition, audio_synthesis, video_assembly
+    slide_number = Column(Integer, nullable=True)  # null for job-level tasks
+    celery_task_id = Column(String, nullable=True)
+    status = Column(String, default="pending")  # pending, running, completed, failed
+    progress_message = Column(String, nullable=True)
+    error_message = Column(String, nullable=True)
+    started_at = Column(DateTime, nullable=True)
+    completed_at = Column(DateTime, nullable=True)
+    created_at = Column(DateTime, default=datetime.datetime.utcnow)
+    
+    job = relationship("PresentationJob", back_populates="tasks")

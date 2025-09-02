@@ -18,4 +18,6 @@ app.conf.update(
     result_serializer='json',
     timezone='UTC',
     enable_utc=True,
+    task_time_limit=600,  # 10 minute hard timeout
+    task_soft_time_limit=480,  # 8 minute soft timeout
 )
