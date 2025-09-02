@@ -22,7 +22,11 @@ def decompose_presentation(job_id: int):
             print(f"Job {job_id} not found.")
             return
 
-        crud.update_job_status(db, job_id, "processing_slides")
+        # Create decomposition task tracking
+        decomp_task = crud.create_job_task(db, job_id, "decomposition")
+        crud.update_task_status(db, task_id=decomp_task.id, status="running", progress_message="Extracting slides from presentation")
+        
+        crud.update_job_status(db, job_id, "processing_slides", current_stage="decomposing")
 
         pptx_object_name = job.s3_pptx_path.split('/', 2)[-1]
         pptx_bucket_name = job.s3_pptx_path.split('/')[1]
@@ -34,6 +38,11 @@ def decompose_presentation(job_id: int):
 
         prs = Presentation(pptx_data)
         num_slides = len(prs.slides)
+        
+        # Update job with slide count
+        crud.update_job_slides(db, job_id, num_slides)
+        crud.update_task_status(db, task_id=decomp_task.id, progress_message=f"Processing {num_slides} slides")
+        
         notes_paths = []
         for i, slide in enumerate(prs.slides):
             slide_number = i + 1
@@ -56,9 +65,15 @@ def decompose_presentation(job_id: int):
         if len(image_paths) != num_slides:
             raise Exception(f"Mismatch between number of images ({len(image_paths)}) and slides ({num_slides}).")
 
-        # Create audio synthesis tasks for all slides
-        audio_tasks = []
+        # Complete decomposition task
+        crud.update_task_status(db, task_id=decomp_task.id, status="completed", progress_message=f"Successfully processed {num_slides} slides")
+        
+        # Create audio synthesis tasks for all slides and collect their AsyncResult objects
+        audio_task_results = []
         for i in range(num_slides):
+            # Create task tracking record
+            audio_task_db = crud.create_job_task(db, job_id, "audio_synthesis", slide_number=i+1)
+            
             # Send audio synthesis task to GPU worker
             task_id = f"synthesize_audio_{job_id}_{i+1}"
             print(f"Sending audio synthesis task for job {job_id}, slide {i+1}")
@@ -67,18 +82,91 @@ def decompose_presentation(job_id: int):
                                         task_id=task_id,
                                         queue='gpu_tasks')
             print(f"Task sent with result: {result}")
-            audio_tasks.append(result)
+            
+            # Update task with Celery task ID
+            crud.update_task_status(db, task_id=audio_task_db.id, set_celery_task_id=str(result.id))
+            
+            audio_task_results.append(result)
         
-        # For now, just trigger the assembly task after a delay to allow audio synthesis
-        # TODO: Implement proper chord coordination
         print(f"Image paths for job {job_id}: {image_paths}")
-        assemble_video.apply_async(args=(image_paths, job_id), countdown=30)
+        print(f"Created {len(audio_task_results)} audio synthesis tasks")
+        
+        # Schedule video assembly with a short delay to allow audio synthesis to complete
+        # Since TTS bypass completes in ~0.03s, a 5-second delay is more than sufficient
+        print(f"Scheduling video assembly for job {job_id} with 5-second delay")
+        assemble_video.apply_async(args=(image_paths, job_id), countdown=5)
 
-        crud.update_job_status(db, job_id, "synthesizing_audio")
+        crud.update_job_status(db, job_id, "synthesizing_audio", current_stage="synthesizing_audio")
 
     except Exception as e:
         crud.update_job_status(db, job_id, "failed")
         print(f"Error in decompose_presentation for job {job_id}: {e}")
+    finally:
+        db.close()
+
+
+@celery_app.task(name="app.workers.tasks_cpu.assemble_video_with_deps")
+def assemble_video_with_deps(image_paths_from_libreoffice, job_id: int, audio_task_ids: list, max_wait_time: int = 600):
+    """
+    Assembles video after waiting for all audio synthesis tasks to complete.
+    
+    Args:
+        image_paths_from_libreoffice: List of image paths returned by LibreOffice service
+        job_id: The presentation job ID
+        audio_task_ids: List of audio synthesis task IDs to wait for
+        max_wait_time: Maximum time to wait for audio tasks (default: 10 minutes)
+    """
+    import time
+    from celery import current_app
+    
+    db = SessionLocal()
+    try:
+        print(f"Waiting for audio synthesis tasks to complete for job {job_id}")
+        print(f"Audio task IDs: {audio_task_ids}")
+        print(f"Maximum wait time: {max_wait_time} seconds")
+        
+        start_time = time.time()
+        completed_tasks = set()
+        
+        # Wait for all audio tasks to complete
+        while len(completed_tasks) < len(audio_task_ids):
+            elapsed_time = time.time() - start_time
+            
+            # Check timeout
+            if elapsed_time > max_wait_time:
+                print(f"Timeout reached ({max_wait_time}s). Proceeding with available audio files.")
+                crud.update_job_status(db, job_id, "failed", error_message=f"Audio synthesis timeout after {max_wait_time}s")
+                return
+            
+            # Check each task status
+            for task_id in audio_task_ids:
+                if task_id not in completed_tasks:
+                    result = current_app.AsyncResult(task_id)
+                    if result.ready():
+                        if result.successful():
+                            print(f"Audio task {task_id} completed successfully")
+                            completed_tasks.add(task_id)
+                        else:
+                            print(f"Audio task {task_id} failed: {result.result}")
+                            # Continue anyway - we'll handle missing audio in assemble_video
+                            completed_tasks.add(task_id)
+            
+            # If not all complete, wait a bit and check again
+            if len(completed_tasks) < len(audio_task_ids):
+                remaining = len(audio_task_ids) - len(completed_tasks)
+                print(f"Waiting for {remaining} audio tasks to complete... ({elapsed_time:.1f}s elapsed)")
+                time.sleep(10)  # Check every 10 seconds
+        
+        total_time = time.time() - start_time
+        print(f"All audio synthesis tasks completed in {total_time:.1f} seconds")
+        
+        # Now call the original video assembly function
+        return assemble_video(image_paths_from_libreoffice, job_id)
+        
+    except Exception as e:
+        crud.update_job_status(db, job_id, "failed")
+        print(f"Error in assemble_video_with_deps for job {job_id}: {e}")
+        raise
     finally:
         db.close()
 

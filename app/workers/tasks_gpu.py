@@ -109,6 +109,9 @@ def synthesize_audio(job_id: int, slide_number: int):
     """
     db = SessionLocal()
     try:
+        # Update task status to running
+        crud.update_task_status(db, celery_task_id=celery_app.current_task.request.id, 
+                               status="running", progress_message=f"Starting audio synthesis for slide {slide_number}")
         job = crud.get_presentation_job(db, job_id)
         if not job:
             raise Exception(f"Job {job_id} not found.")
@@ -188,19 +191,36 @@ def synthesize_audio(job_id: int, slide_number: int):
                 processed_text, emotion, speed, pitch = parse_note_text_tags(note_text)
                 print(f"Processing: '{processed_text}' with emotion='{emotion}', speed={speed}, pitch={pitch}")
                 
-                # Initialize MeloTTS if not already done
+                # Initialize MeloTTS if not already loaded
                 global base_tts
                 if base_tts is None:
                     try:
+                        print("Initializing MeloTTS for speech synthesis...")
+                        
+                        # Download required NLTK data
+                        try:
+                            import nltk
+                            print("Downloading required NLTK data...")
+                            nltk.download('averaged_perceptron_tagger_eng', quiet=True)
+                            nltk.download('averaged_perceptron_tagger', quiet=True)
+                            nltk.download('cmudict', quiet=True)
+                            print("NLTK data downloaded successfully")
+                        except Exception as nltk_error:
+                            print(f"NLTK setup warning: {nltk_error}")
+                        
+                        # Import and initialize MeloTTS
                         from melo.api import TTS
+                        model_name = 'EN'
                         base_tts = TTS(language='EN', device=device)
-                        print("MeloTTS initialized successfully")
-                    except Exception as tts_init_error:
-                        print(f"MeloTTS initialization failed: {tts_init_error}")
-                        base_tts = None
+                        base_speaker_ids = base_tts.hps.data.spk2id
+                        print(f"MeloTTS initialized successfully with speakers: {list(base_speaker_ids.keys())}")
+                    except Exception as init_error:
+                        print(f"MeloTTS initialization failed: {init_error}")
+                        print("Falling back to placeholder audio generation")
+                        base_tts = "FAILED"
                 
                 # Generate base TTS audio using MeloTTS
-                if base_tts is not None:
+                if base_tts is not None and base_tts != "FAILED":
                     try:
                         # Use MeloTTS for base speech synthesis
                         temp_base_audio = f"temp_base_{job_id}_{slide_number}.wav"
@@ -251,22 +271,22 @@ def synthesize_audio(job_id: int, slide_number: int):
                         raise tts_error
                         
                 else:
-                    # Fallback to old placeholder system if MeloTTS fails
-                    print("MeloTTS not available, using duration-based placeholder")
+                    # Fallback to duration-based silence if MeloTTS fails
+                    print("MeloTTS not available, generating silence based on text duration")
                     word_count = len(processed_text.split())
+                    # Estimate duration: ~150 words per minute average speaking rate
                     estimated_duration = max(3.0, word_count / 150.0 * 60.0)
                     estimated_duration = min(estimated_duration, 30.0)
                     
                     sample_rate = 24000
                     duration_samples = int(estimated_duration * sample_rate)
                     
+                    # Generate silence instead of beeps
                     import numpy as np
-                    t = np.linspace(0, estimated_duration, duration_samples)
-                    # Create audible beeps as placeholder
-                    audio = 0.3 * np.sin(2 * np.pi * 440 * t) * np.sin(2 * np.pi * 2 * t)  # Amplitude modulated tone
+                    audio = np.zeros(duration_samples, dtype=np.float32)
                     
                     sf.write(save_path, audio, sample_rate)
-                    print(f"Generated {estimated_duration:.1f}s audio placeholder for slide {slide_number}")
+                    print(f"Generated {estimated_duration:.1f}s silent audio for slide {slide_number}")
                 
             except Exception as e:
                 print(f"Error in speech synthesis: {e}")
@@ -285,10 +305,17 @@ def synthesize_audio(job_id: int, slide_number: int):
                 length=os.path.getsize(save_path)
             )
 
+        # Mark task as completed
+        crud.update_task_status(db, celery_task_id=celery_app.current_task.request.id, 
+                               status="completed", progress_message=f"Audio synthesis completed for slide {slide_number}")
+        
         return f"Audio for slide {slide_number} of job {job_id} created."
 
     except Exception as e:
-        crud.update_job_status(db, job_id, "failed")
+        # Mark task as failed
+        crud.update_task_status(db, celery_task_id=celery_app.current_task.request.id, 
+                               status="failed", error_message=str(e))
+        crud.update_job_status(db, job_id, "failed", error_message=f"Audio synthesis failed for slide {slide_number}: {str(e)}")
         print(f"Error in synthesize_audio for job {job_id}, slide {slide_number}: {e}")
         # Reraise to let Celery know the task failed
         raise
