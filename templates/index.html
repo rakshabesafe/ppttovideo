@@ -13,8 +13,32 @@
         th, td { border: 1px solid #ddd; padding: 8px; text-align: left; }
         th { background-color: #f2f2f2; }
         .status-pending, .status-processing { color: orange; }
+        .status-synthesizing_audio { color: purple; }
+        .status-assembling_video { color: teal; }
         .status-completed { color: green; }
         .status-failed { color: red; }
+        
+        .progress-detail {
+            font-size: 0.9em;
+            line-height: 1.4;
+            max-width: 300px;
+            padding: 8px;
+            background: #f8f9fa;
+            border-radius: 4px;
+            border-left: 3px solid #007bff;
+            margin: 4px 0;
+            white-space: pre-wrap;
+        }
+        
+        .progress-detail.completed {
+            border-left-color: #28a745;
+            background: #d4edda;
+        }
+        
+        .progress-detail.failed {
+            border-left-color: #dc3545;
+            background: #f8d7da;
+        }
         .hidden { display: none; }
         .cleanup-section { margin: 20px 0; padding: 15px; background: #fff3cd; border: 1px solid #ffeaa7; border-radius: 5px; }
         .cleanup-btn { background: #dc3545; color: white; border: none; padding: 10px 20px; border-radius: 5px; cursor: pointer; font-size: 14px; }
@@ -263,13 +287,54 @@
             row.innerHTML = `
                 <td>${job.id}</td>
                 <td>${job.owner_id}</td>
-                <td class="status-${job.status}">${job.status}</td>
+                <td class="status-${job.status}" id="status-${job.id}">${job.status}</td>
                 <td>${new Date(job.created_at).toLocaleString()}</td>
                 <td id="action-${job.id}">
-                    ${job.status === 'completed' ? `<a href="/api/presentations/download/${job.id}" target="_blank">Download</a>` : 'Processing...'}
+                    ${job.status === 'completed' ? `<a href="/api/presentations/download/${job.id}" target="_blank">Download</a>` : '<div id="progress-' + job.id + '">Loading progress...</div>'}
                 </td>
             `;
             tbody.prepend(row);
+            
+            // Load detailed progress for non-completed jobs
+            if (job.status !== 'completed') {
+                loadJobProgress(job.id);
+            }
+        }
+
+        async function loadJobProgress(jobId) {
+            try {
+                const response = await fetch(`${API_BASE_URL}/presentations/progress/${jobId}`);
+                if (response.ok) {
+                    const progress = await response.json();
+                    updateJobProgress(progress);
+                }
+            } catch (error) {
+                console.error(`Failed to load progress for job ${jobId}:`, error);
+            }
+        }
+
+        function updateJobProgress(progress) {
+            const statusCell = document.getElementById(`status-${progress.job_id}`);
+            const progressDiv = document.getElementById(`progress-${progress.job_id}`);
+            
+            if (statusCell) {
+                statusCell.textContent = progress.status;
+                statusCell.className = `status-${progress.status}`;
+            }
+            
+            if (progressDiv && progress.overall_progress) {
+                // Convert newlines to <br> for HTML display
+                const formattedProgress = progress.overall_progress.replace(/\n/g, '<br>');
+                progressDiv.innerHTML = `<div class="progress-detail">${formattedProgress}</div>`;
+            }
+            
+            // If completed, show download button
+            if (progress.status === 'completed') {
+                const actionCell = document.getElementById(`action-${progress.job_id}`);
+                if (actionCell) {
+                    actionCell.innerHTML = `<a href="/api/presentations/download/${progress.job_id}" target="_blank">Download</a>`;
+                }
+            }
         }
 
         function updateJobStatus(job) {
@@ -279,6 +344,9 @@
                 row.querySelector('td:nth-child(3)').className = `status-${job.status}`;
                 if (job.status === 'completed') {
                     document.getElementById(`action-${job.id}`).innerHTML = `<a href="/api/presentations/download/${job.id}" target="_blank">Download</a>`;
+                } else {
+                    // Load detailed progress for active jobs
+                    loadJobProgress(job.id);
                 }
             } else {
                 addJobRow(job);
@@ -375,11 +443,9 @@
                 const statusCell = row.querySelector('td:nth-child(3)');
                 if (statusCell.textContent !== 'completed' && statusCell.textContent !== 'failed') {
                     const jobId = row.id.split('-')[1];
-                    const response = await fetch(`${API_BASE_URL}/presentations/status/${jobId}`);
-                    if (response.ok) {
-                        const job = await response.json();
-                        updateJobStatus(job);
-                    }
+                    
+                    // Load detailed progress instead of just status
+                    loadJobProgress(jobId);
                 }
             });
         }, 5000); // Poll every 5 seconds

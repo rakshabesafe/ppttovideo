@@ -101,3 +101,76 @@ def download_video(job_id: int, db: Session = Depends(get_db)):
 
     except S3Error as e:
         raise HTTPException(status_code=500, detail=f"MinIO error: {e}")
+
+@router.get("/progress/{job_id}")
+def get_job_progress(job_id: int, db: Session = Depends(get_db)):
+    """Get detailed progress information for a job including individual task status"""
+    db_job = crud.get_presentation_job(db, job_id=job_id)
+    if db_job is None:
+        raise HTTPException(status_code=404, detail="Job not found")
+    
+    # Get all tasks for this job
+    from app.db.models import JobTask
+    tasks = db.query(JobTask).filter(JobTask.job_id == job_id).order_by(JobTask.created_at).all()
+    
+    # Build detailed progress response
+    progress_info = {
+        "job_id": job_id,
+        "status": db_job.status,
+        "current_stage": db_job.current_stage,
+        "num_slides": db_job.num_slides,
+        "error_message": db_job.error_message,
+        "created_at": db_job.created_at,
+        "updated_at": db_job.updated_at,
+        "tasks": []
+    }
+    
+    for task in tasks:
+        task_info = {
+            "id": task.id,
+            "task_type": task.task_type,
+            "slide_number": task.slide_number,
+            "status": task.status,
+            "progress_message": task.progress_message,
+            "error_message": task.error_message,
+            "started_at": task.started_at,
+            "completed_at": task.completed_at
+        }
+        progress_info["tasks"].append(task_info)
+    
+    # Generate overall progress description
+    if db_job.status == "completed":
+        progress_info["overall_progress"] = "✅ Video generation completed successfully!"
+    elif db_job.status == "failed":
+        progress_info["overall_progress"] = f"❌ Job failed: {db_job.error_message}"
+    else:
+        # Generate dynamic progress based on tasks
+        total_tasks = len(tasks)
+        completed_tasks = len([t for t in tasks if t.status == "completed"])
+        
+        if db_job.current_stage == "pending":
+            progress_info["overall_progress"] = "🔄 Job queued and waiting to start..."
+        elif db_job.current_stage == "processing_slides":
+            progress_info["overall_progress"] = "📊 Converting PowerPoint slides to images..."
+        elif db_job.current_stage == "synthesizing_audio":
+            audio_tasks = [t for t in tasks if t.task_type == "audio_synthesis"]
+            completed_audio = len([t for t in audio_tasks if t.status == "completed"])
+            
+            if audio_tasks:
+                progress_info["overall_progress"] = f"🎵 Synthesizing audio: {completed_audio}/{len(audio_tasks)} slides completed"
+                # Add individual slide progress
+                for task in audio_tasks:
+                    if task.status == "completed":
+                        progress_info["overall_progress"] += f"\n  ✅ Slide {task.slide_number}: Audio generated"
+                    elif task.status == "running":
+                        progress_info["overall_progress"] += f"\n  🔄 Slide {task.slide_number}: {task.progress_message or 'Processing...'}"
+                    else:
+                        progress_info["overall_progress"] += f"\n  ⏳ Slide {task.slide_number}: Queued"
+            else:
+                progress_info["overall_progress"] = "🎵 Starting audio synthesis..."
+        elif db_job.current_stage == "assembling_video":
+            progress_info["overall_progress"] = "🎬 Assembling final video from slides and audio..."
+        else:
+            progress_info["overall_progress"] = f"🔄 Processing ({completed_tasks}/{total_tasks} tasks completed)"
+    
+    return progress_info
