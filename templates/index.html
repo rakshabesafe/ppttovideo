@@ -53,6 +53,20 @@
         <a href="/dashboard" style="background: #007bff; color: white; padding: 10px 20px; text-decoration: none; border-radius: 5px; font-weight: 500;">🔧 Dashboard</a>
     </div>
 
+    <!-- Voice Test Section -->
+    <div class="cleanup-section">
+        <h3>🎤 Voice Test</h3>
+        <p>Test voice synthesis independently to debug TTS issues</p>
+        <form id="voice-test-form" style="display: flex; gap: 10px; align-items: center; flex-wrap: wrap;">
+            <input type="text" id="test-text" placeholder="Enter text to synthesize..." style="flex: 2; min-width: 200px; padding: 8px;">
+            <select id="test-voice" style="flex: 1; min-width: 150px; padding: 8px;">
+                <option value="">Loading voices...</option>
+            </select>
+            <button type="submit" style="background: #28a745; color: white; border: none; padding: 8px 16px; border-radius: 4px; cursor: pointer;">🔊 Generate Audio</button>
+        </form>
+        <div id="voice-test-result" style="margin-top: 10px;"></div>
+    </div>
+
     <div class="container">
         <div class="col">
             <h2>Step 1: Create or Select User</h2>
@@ -118,9 +132,22 @@
         <span id="cleanup-status" style="margin-left: 15px; font-weight: bold;"></span>
     </div>
     
+    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px;">
+        <h3>All Jobs</h3>
+        <div style="display: flex; gap: 10px; align-items: center;">
+            <span id="selectedJobCount" style="color: #6c757d; font-size: 14px;">0 selected</span>
+            <button id="deleteSelectedJobsBtn" class="cleanup-btn" onclick="deleteSelectedJobs()" disabled>
+                Delete Selected Jobs
+            </button>
+        </div>
+    </div>
+    
     <table id="jobs-table">
         <thead>
             <tr>
+                <th style="width: 40px;">
+                    <input type="checkbox" id="selectAllJobs" onchange="toggleSelectAllJobs()">
+                </th>
                 <th>Job ID</th>
                 <th>User ID</th>
                 <th>Status</th>
@@ -136,6 +163,80 @@
     <script>
         const API_BASE_URL = "/api";
         let currentUserId = null;
+
+        // Voice Test Functionality
+        async function loadVoicesForTest() {
+            try {
+                const response = await fetch(`${API_BASE_URL}/voice-test/voices`);
+                const voices = await response.json();
+                
+                const select = document.getElementById('test-voice');
+                select.innerHTML = '<option value="">Select a voice...</option>';
+                
+                voices.forEach(voice => {
+                    const option = document.createElement('option');
+                    option.value = voice.id;
+                    option.textContent = `${voice.name} (${voice.type})`;
+                    select.appendChild(option);
+                });
+            } catch (error) {
+                console.error('Error loading voices:', error);
+                document.getElementById('test-voice').innerHTML = '<option value="">Error loading voices</option>';
+            }
+        }
+
+        async function testVoiceSynthesis(event) {
+            event.preventDefault();
+            
+            const text = document.getElementById('test-text').value.trim();
+            const voiceId = document.getElementById('test-voice').value;
+            const resultDiv = document.getElementById('voice-test-result');
+            
+            if (!text) {
+                resultDiv.innerHTML = '<span style="color: red;">Please enter text to synthesize</span>';
+                return;
+            }
+            
+            if (!voiceId) {
+                resultDiv.innerHTML = '<span style="color: red;">Please select a voice</span>';
+                return;
+            }
+            
+            resultDiv.innerHTML = '<span style="color: blue;">🔄 Generating audio...</span>';
+            
+            try {
+                const response = await fetch(`${API_BASE_URL}/voice-test/test-voice`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        text: text,
+                        voice_clone_id: parseInt(voiceId)
+                    })
+                });
+                
+                if (response.ok) {
+                    const blob = await response.blob();
+                    const audioUrl = URL.createObjectURL(blob);
+                    
+                    resultDiv.innerHTML = `
+                        <span style="color: green;">✅ Audio generated successfully!</span><br>
+                        <audio controls style="margin-top: 10px;">
+                            <source src="${audioUrl}" type="audio/wav">
+                            Your browser does not support audio playback.
+                        </audio><br>
+                        <a href="${audioUrl}" download="test-voice.wav" style="color: #007bff; text-decoration: none; font-size: 14px; margin-top: 5px; display: inline-block;">💾 Download Audio</a>
+                    `;
+                } else {
+                    const errorText = await response.text();
+                    resultDiv.innerHTML = `<span style="color: red;">❌ Error: ${errorText}</span>`;
+                }
+            } catch (error) {
+                console.error('Voice test error:', error);
+                resultDiv.innerHTML = `<span style="color: red;">❌ Network error: ${error.message}</span>`;
+            }
+        }
 
         const userSelection = document.getElementById('user-selection');
         const loginForm = document.getElementById('login-form');
@@ -285,6 +386,9 @@
             const row = document.createElement('tr');
             row.id = `job-${job.id}`;
             row.innerHTML = `
+                <td>
+                    <input type="checkbox" class="job-checkbox" value="${job.id}" onchange="updateSelectedJobCount()">
+                </td>
                 <td>${job.id}</td>
                 <td>${job.owner_id}</td>
                 <td class="status-${job.status}" id="status-${job.id}">${job.status}</td>
@@ -437,11 +541,97 @@
             }
         });
 
+        // Selective job cleanup functions
+        function toggleSelectAllJobs() {
+            const selectAll = document.getElementById('selectAllJobs');
+            const jobCheckboxes = document.querySelectorAll('.job-checkbox');
+            
+            jobCheckboxes.forEach(checkbox => {
+                checkbox.checked = selectAll.checked;
+            });
+            
+            updateSelectedJobCount();
+        }
+
+        function updateSelectedJobCount() {
+            const checkboxes = document.querySelectorAll('.job-checkbox');
+            const selectedCheckboxes = document.querySelectorAll('.job-checkbox:checked');
+            const count = selectedCheckboxes.length;
+            
+            document.getElementById('selectedJobCount').textContent = `${count} selected`;
+            document.getElementById('deleteSelectedJobsBtn').disabled = count === 0;
+            
+            // Update select all checkbox state
+            const selectAll = document.getElementById('selectAllJobs');
+            if (count === 0) {
+                selectAll.indeterminate = false;
+                selectAll.checked = false;
+            } else if (count === checkboxes.length) {
+                selectAll.indeterminate = false;
+                selectAll.checked = true;
+            } else {
+                selectAll.indeterminate = true;
+                selectAll.checked = false;
+            }
+        }
+
+        async function deleteSelectedJobs() {
+            const selectedCheckboxes = document.querySelectorAll('.job-checkbox:checked');
+            const selectedJobIds = Array.from(selectedCheckboxes).map(cb => parseInt(cb.value));
+            
+            if (selectedJobIds.length === 0) {
+                alert('No jobs selected');
+                return;
+            }
+            
+            const jobText = selectedJobIds.length === 1 ? 'job' : 'jobs';
+            if (!confirm(`Are you sure you want to delete ${selectedJobIds.length} selected ${jobText}? This will permanently remove the job records and associated files.`)) {
+                return;
+            }
+            
+            const deleteBtn = document.getElementById('deleteSelectedJobsBtn');
+            deleteBtn.disabled = true;
+            deleteBtn.textContent = 'Deleting...';
+            
+            try {
+                const response = await fetch('/api/cleanup/specific-jobs', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        job_ids: selectedJobIds
+                    })
+                });
+                
+                if (response.ok) {
+                    const result = await response.json();
+                    alert(`Successfully deleted ${result.cleanup_stats.jobs_deleted} jobs and ${result.cleanup_stats.files_deleted} files.`);
+                    
+                    // Reset selection state
+                    document.getElementById('selectAllJobs').checked = false;
+                    updateSelectedJobCount();
+                    
+                    // Refresh jobs table
+                    await loadAllJobs();
+                } else {
+                    const error = await response.json();
+                    alert(`Error deleting jobs: ${error.detail}`);
+                }
+            } catch (error) {
+                console.error('Error deleting jobs:', error);
+                alert('Error deleting jobs. Please check the console for details.');
+            } finally {
+                deleteBtn.disabled = false;
+                deleteBtn.textContent = 'Delete Selected Jobs';
+            }
+        }
+
         setInterval(async () => {
             const rows = document.querySelectorAll('#jobs-table tbody tr');
             rows.forEach(async row => {
-                const statusCell = row.querySelector('td:nth-child(3)');
-                if (statusCell.textContent !== 'completed' && statusCell.textContent !== 'failed') {
+                const statusCell = row.querySelector('td:nth-child(4)'); // Updated column index due to checkbox
+                if (statusCell && statusCell.textContent !== 'completed' && statusCell.textContent !== 'failed') {
                     const jobId = row.id.split('-')[1];
                     
                     // Load detailed progress instead of just status
@@ -449,6 +639,12 @@
                 }
             });
         }, 5000); // Poll every 5 seconds
+
+        // Initialize voice test functionality
+        document.getElementById('voice-test-form').addEventListener('submit', testVoiceSynthesis);
+        
+        // Load voices when page loads
+        document.addEventListener('DOMContentLoaded', loadVoicesForTest);
 
     </script>
 </body>

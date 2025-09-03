@@ -2,7 +2,7 @@ from fastapi import FastAPI, Request
 from fastapi.templating import Jinja2Templates
 from app.db.session import engine, SessionLocal
 from app.db import models
-from app.api.endpoints import users, voice_clones, presentations, cleanup, dashboard
+from app.api.endpoints import users, voice_clones, presentations, cleanup, dashboard, voice_test
 from app import crud
 
 # This will create the tables in the database
@@ -35,6 +35,7 @@ app.include_router(voice_clones.router, prefix="/api/voice-clones", tags=["voice
 app.include_router(presentations.router, prefix="/api/presentations", tags=["presentations"])
 app.include_router(cleanup.router, prefix="/api/cleanup", tags=["cleanup"])
 app.include_router(dashboard.router, prefix="/api/dashboard", tags=["dashboard"])
+app.include_router(voice_test.router, prefix="/api/voice-test", tags=["voice-test"])
 
 
 @app.get("/")
