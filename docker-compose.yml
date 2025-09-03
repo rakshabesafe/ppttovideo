@@ -109,7 +109,6 @@ services:
       - ./app:/app
       - ${WORKER_GPU_NLTK_DATA:-./data/nltk_data}:/root/nltk_data
       - ${WORKER_GPU_HF_CACHE:-./data/huggingface_cache}:/root/.cache/huggingface/hub
-      - ${WORKER_GPU_OPENVOKE_REPO:-./data/OpenVoice}:/OpenVoice
       - ${WORKER_GPU_OPENVOKE_CHECKPOINTS:-./data/checkpoints_v2}:/checkpoints_v2
     environment:
       - DATABASE_URL=postgresql://${POSTGRES_USER:-user}:${POSTGRES_PASSWORD:-password}@postgres:5432/${POSTGRES_DB:-presentation_gen_db}
