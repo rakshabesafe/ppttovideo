@@ -109,3 +109,6 @@ venv.bak/
 *.swp
 *.swo
 *~
+
+# Data files
+data/
