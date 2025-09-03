@@ -2,7 +2,7 @@ import pytest
 import io
 import tempfile
 from unittest.mock import Mock, patch, MagicMock, call
-from app.workers.tasks_cpu import decompose_presentation, assemble_video
+from app.workers.tasks_cpu import decompose_presentation, assemble_video, assemble_video_with_deps
 
 
 class TestDecomposePresentation:
@@ -36,11 +36,15 @@ class TestDecomposePresentation:
                         with patch('app.workers.tasks_cpu.Presentation') as mock_prs:
                             mocks['Presentation'] = mock_prs
                             
-                            # Mock Celery chord and group
-                            with patch('app.workers.tasks_cpu.chord') as mock_chord, \
-                                 patch('app.workers.tasks_cpu.group') as mock_group:
-                                mocks['chord'] = mock_chord
-                                mocks['group'] = mock_group
+                            # Mock Celery task sending
+                            with patch('app.workers.tasks_cpu.celery_app.send_task') as mock_send_task, \
+                                 patch('app.workers.tasks_cpu.assemble_video_with_deps.apply_async') as mock_apply_async:
+
+                                # Each call to send_task should return a mock AsyncResult
+                                mock_send_task.return_value = Mock(id='mock_task_id')
+
+                                mocks['send_task'] = mock_send_task
+                                mocks['apply_async'] = mock_apply_async
                                 
                                 yield mocks
     
@@ -87,20 +91,18 @@ class TestDecomposePresentation:
         }
         mocks['requests'].post.return_value = mock_libreoffice_response
         
-        # Setup Celery chord/group mocks
-        mock_header = Mock()
-        mocks['group'].return_value = mock_header
-        mocks['chord'].return_value = Mock()
-        
         # Execute task
         decompose_presentation(job_id)
         
         # Verify database operations
         mocks['crud'].get_presentation_job.assert_called_once_with(mocks['db'], job_id)
-        mocks['crud'].update_job_status.assert_has_calls([
-            call(mocks['db'], job_id, "processing_slides"),
-            call(mocks['db'], job_id, "synthesizing_audio")
-        ])
+
+        # Verify job status updates
+        update_status_calls = [
+            call(mocks['db'], job_id, "processing_slides", current_stage="decomposing"),
+            call(mocks['db'], job_id, "synthesizing_audio", current_stage="synthesizing_audio")
+        ]
+        mocks['crud'].update_job_status.assert_has_calls(update_status_calls, any_order=True)
         
         # Verify MinIO operations
         mocks['minio_service'].client.get_object.assert_called_once_with("ingest", "test-presentation.pptx")
@@ -112,8 +114,9 @@ class TestDecomposePresentation:
             json={"bucket_name": "ingest", "object_name": "test-presentation.pptx"}
         )
         
-        # Verify Celery chord setup
-        mocks['chord'].assert_called_once()
+        # Verify Celery task dispatches
+        assert mocks['send_task'].call_count == 3  # One audio task per slide
+        mocks['apply_async'].assert_called_once()  # One video assembly task
     
     def test_decompose_presentation_job_not_found(self, mock_dependencies):
         """Test decompose_presentation when job is not found"""
@@ -284,61 +287,53 @@ class TestAssembleVideo:
                         with patch('app.workers.tasks_cpu.ImageClip') as mock_image_clip, \
                              patch('app.workers.tasks_cpu.AudioFileClip') as mock_audio_clip, \
                              patch('app.workers.tasks_cpu.concatenate_videoclips') as mock_concat, \
-                             patch('os.path.getsize') as mock_getsize:
+                             patch('os.path.getsize') as mock_getsize, \
+                             patch('builtins.open', new_callable=mock_open, read_data=b'data') as mock_open_file:
                             
                             mocks['ImageClip'] = mock_image_clip
                             mocks['AudioFileClip'] = mock_audio_clip
                             mocks['concatenate_videoclips'] = mock_concat
                             mocks['getsize'] = mock_getsize
+                            mocks['open'] = mock_open_file
                             
                             yield mocks
     
     def test_assemble_video_success(self, mock_dependencies):
         """Test successful video assembly"""
         job_id = 1
-        results = []  # Celery chord results (not used in current implementation)
+        # The task now receives a list of image paths from the previous task
+        image_paths = [
+            "presentations/my-job-uuid/images/slide-1.png",
+            "presentations/my-job-uuid/images/slide-2.png",
+            "presentations/my-job-uuid/images/slide-3.png"
+        ]
         mocks = mock_dependencies
         
-        # Setup MinIO list_objects responses
-        mock_image_objects = [
-            Mock(object_name="1/images/slide-01.png"),
-            Mock(object_name="1/images/slide-02.png"),
-            Mock(object_name="1/images/slide-03.png")
-        ]
+        # Setup MinIO list_objects responses for audio files
         mock_audio_objects = [
-            Mock(object_name="1/audio/slide_1.wav"),
-            Mock(object_name="1/audio/slide_2.wav"), 
-            Mock(object_name="1/audio/slide_3.wav")
+            Mock(object_name="my-job-uuid/audio/slide_1.wav"),
+            Mock(object_name="my-job-uuid/audio/slide_2.wav"),
+            Mock(object_name="my-job-uuid/audio/slide_3.wav")
         ]
         
-        def list_objects_side_effect(bucket, prefix):
-            if "images" in prefix:
-                return mock_image_objects
-            elif "audio" in prefix:
-                return mock_audio_objects
-            return []
-        
-        mocks['minio_service'].client.list_objects.side_effect = list_objects_side_effect
+        mocks['minio_service'].client.list_objects.return_value = mock_audio_objects
         mocks['minio_service'].client.fget_object.return_value = None
         
         # Setup MoviePy mocks
         mock_audio_clips = []
         mock_image_clips = []
-        mock_final_clips = []
         
         for i in range(3):
             audio_clip = Mock()
-            audio_clip.duration = 5.0  # 5 seconds
-            mock_audio_clips.append(audio_clip)
+            audio_clip.duration = 5.0
+            # Mock the with_audio method
+            final_clip = Mock()
             
             image_clip = Mock()
-            image_clip.set_duration.return_value = image_clip
-            image_clip.fps = 24
-            mock_image_clips.append(image_clip)
+            image_clip.with_audio.return_value = final_clip
             
-            final_clip = Mock()
-            image_clip.set_audio.return_value = final_clip
-            mock_final_clips.append(final_clip)
+            mock_audio_clips.append(audio_clip)
+            mock_image_clips.append(image_clip)
         
         mocks['AudioFileClip'].side_effect = mock_audio_clips
         mocks['ImageClip'].side_effect = mock_image_clips
@@ -346,27 +341,28 @@ class TestAssembleVideo:
         # Setup final video mock
         mock_final_video = Mock()
         mocks['concatenate_videoclips'].return_value = mock_final_video
+        mock_final_video.write_videofile.return_value = None
         mocks['getsize'].return_value = 1024 * 1024  # 1MB
         
         # Setup file upload mock
-        mocks['minio_service'].upload_file.return_value = "/output/1.mp4"
+        mocks['minio_service'].upload_file.return_value = f"/output/{job_id}.mp4"
         
         # Execute task
-        assemble_video(results, job_id)
+        assemble_video(image_paths, job_id)
         
         # Verify database operations
         mocks['crud'].update_job_status.assert_has_calls([
             call(mocks['db'], job_id, "assembling_video"),
-            call(mocks['db'], job_id, "completed", video_path="/output/1.mp4")
+            call(mocks['db'], job_id, "completed", video_path=f"/output/{job_id}.mp4")
         ])
         
         # Verify MinIO operations
-        assert mocks['minio_service'].client.list_objects.call_count == 2  # images and audio
+        mocks['minio_service'].client.list_objects.assert_called_once_with("presentations", prefix="my-job-uuid/audio/")
         assert mocks['minio_service'].client.fget_object.call_count == 6  # 3 images + 3 audio files
         
         # Verify MoviePy operations
-        assert len(mock_audio_clips) == 3
-        assert len(mock_image_clips) == 3
+        assert mocks['AudioFileClip'].call_count == 3
+        assert mocks['ImageClip'].call_count == 3
         mocks['concatenate_videoclips'].assert_called_once()
         mock_final_video.write_videofile.assert_called_once()
         
@@ -374,75 +370,62 @@ class TestAssembleVideo:
         mocks['minio_service'].upload_file.assert_called_once()
     
     def test_assemble_video_missing_audio(self, mock_dependencies):
-        """Test video assembly when audio file is missing"""
+        """Test video assembly when an audio file is missing"""
         job_id = 1
-        results = []
+        image_paths = [
+            "presentations/my-job-uuid/images/slide-1.png",
+            "presentations/my-job-uuid/images/slide-2.png"
+        ]
         mocks = mock_dependencies
         
         # Setup objects with missing audio for slide 2
-        mock_image_objects = [
-            Mock(object_name="1/images/slide-01.png"),
-            Mock(object_name="1/images/slide-02.png")
-        ]
         mock_audio_objects = [
-            Mock(object_name="1/audio/slide_1.wav")
+            Mock(object_name="my-job-uuid/audio/slide_1.wav")
             # Missing slide_2.wav
         ]
         
-        def list_objects_side_effect(bucket, prefix):
-            if "images" in prefix:
-                return mock_image_objects
-            elif "audio" in prefix:
-                return mock_audio_objects
-            return []
+        mocks['minio_service'].client.list_objects.return_value = mock_audio_objects
         
-        mocks['minio_service'].client.list_objects.side_effect = list_objects_side_effect
-        
-        # Execute task
-        assemble_video(results, job_id)
+        # Execute task and expect an exception because audio is missing
+        with pytest.raises(Exception, match="Missing audio for slide 2"):
+            assemble_video(image_paths, job_id)
         
         # Verify job was marked as failed
         mocks['crud'].update_job_status.assert_any_call(mocks['db'], job_id, "failed")
     
     def test_assemble_video_exception_handling(self, mock_dependencies):
-        """Test video assembly exception handling"""
+        """Test video assembly exception handling during MinIO download"""
         job_id = 1
-        results = []
+        image_paths = ["presentations/my-job-uuid/images/slide-1.png"]
         mocks = mock_dependencies
         
-        # Make list_objects raise an exception
-        mocks['minio_service'].client.list_objects.side_effect = Exception("MinIO error")
+        # Make fget_object raise an exception
+        mocks['minio_service'].client.fget_object.side_effect = Exception("MinIO download error")
         
         # Execute task
-        assemble_video(results, job_id)
+        with pytest.raises(Exception, match="MinIO download error"):
+            assemble_video(image_paths, job_id)
         
         # Verify job was marked as failed
         mocks['crud'].update_job_status.assert_any_call(mocks['db'], job_id, "failed")
     
     def test_assemble_video_moviepy_error(self, mock_dependencies):
-        """Test video assembly with MoviePy error"""
+        """Test video assembly with a MoviePy error"""
         job_id = 1
-        results = []
+        image_paths = ["presentations/my-job-uuid/images/slide-1.png"]
         mocks = mock_dependencies
         
         # Setup successful MinIO operations
-        mock_image_objects = [Mock(object_name="1/images/slide-01.png")]
-        mock_audio_objects = [Mock(object_name="1/audio/slide_1.wav")]
-        
-        def list_objects_side_effect(bucket, prefix):
-            if "images" in prefix:
-                return mock_image_objects
-            elif "audio" in prefix:
-                return mock_audio_objects
-            return []
-        
-        mocks['minio_service'].client.list_objects.side_effect = list_objects_side_effect
+        mock_audio_objects = [Mock(object_name="my-job-uuid/audio/slide_1.wav")]
+        mocks['minio_service'].client.list_objects.return_value = mock_audio_objects
+        mocks['minio_service'].client.fget_object.return_value = None
         
         # Make AudioFileClip raise an exception
         mocks['AudioFileClip'].side_effect = Exception("Audio processing error")
         
         # Execute task
-        assemble_video(results, job_id)
+        with pytest.raises(Exception, match="Audio processing error"):
+            assemble_video(image_paths, job_id)
         
         # Verify job was marked as failed
         mocks['crud'].update_job_status.assert_any_call(mocks['db'], job_id, "failed")

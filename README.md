@@ -240,6 +240,73 @@ LIBREOFFICE_TMP_VOLUME=./data/libreoffice_tmp
 - `presentations`: Intermediate processing files
 - `output`: Final generated videos
 
+## 🧪 Testing
+
+This project includes a suite of unit and integration tests to ensure code quality and correctness.
+
+### 1. Running Unit Tests
+
+Unit tests are designed to test individual components in isolation and do not require the full Docker environment to be running.
+
+**Setup:**
+
+First, install the necessary test dependencies:
+```bash
+pip install -r requirements-test.txt
+```
+*Note: You may need to install system-level dependencies like `libpq-dev` and `mecab` if they are not already on your system. Please see the `Dockerfile` for more details.*
+
+**Execution:**
+
+To run the entire unit test suite, use `pytest`:
+```bash
+python -m pytest
+```
+To run tests for a specific file:
+```bash
+python -m pytest tests/unit/test_tasks_cpu.py
+```
+
+### 2. Running Integration Tests
+
+Integration tests are designed to test the interaction between different components and require the Docker environment to be active.
+
+**Setup:**
+
+Ensure all services are running:
+```bash
+docker-compose up -d
+```
+
+**Execution:**
+
+Run the integration tests using a specific pytest mark:
+```bash
+python -m pytest -m integration
+```
+The `test_celery_task_invocation.py` script will be run. It tests the `assemble_video` task by creating dummy data in MinIO, running the task, and verifying the output video.
+
+### 3. Standalone GPU Task Runner
+
+A standalone script is provided to manually trigger a single `synthesize_audio` task on the GPU worker. This is useful for testing the audio synthesis pipeline independently.
+
+**Setup:**
+
+1.  **Ensure the Docker environment is running.**
+2.  **Create a job through the UI:** You need a valid `job_id`. Let's assume you create job with ID `1`.
+3.  **Ensure slide notes exist in MinIO:** For the job and slide you want to test (e.g., job 1, slide 1), you must create a note file in MinIO.
+    - Go to the MinIO Console: [http://localhost:19001](http://localhost:19001)
+    - Navigate to the `presentations` bucket.
+    - Create a new file with the object name `1/notes/slide_1.txt` and add some text to it.
+
+**Execution:**
+
+Run the script from your terminal:
+```bash
+python test_gpu_task_runner.py
+```
+The script will send the task to the GPU worker and print the status until it completes, fails, or times out. You can change the `TEST_JOB_ID` and `TEST_SLIDE_NUMBER` variables inside the script.
+
 ## 🐛 Troubleshooting
 
 ### Common Issues

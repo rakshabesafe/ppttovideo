@@ -1,395 +1,191 @@
 import pytest
-import io
-import tempfile
-from unittest.mock import Mock, patch, MagicMock
-import torch
-from app.workers.tasks_gpu import synthesize_audio
+from unittest.mock import Mock, patch, call
+from celery.exceptions import SoftTimeLimitExceeded
+
+# Mock the entire service and processor for isolation
+# This avoids issues with their complex internal dependencies (like torch)
+@pytest.fixture(autouse=True)
+def mock_tts_processor():
+    with patch('app.workers.tasks_gpu.TTSProcessor', autospec=True) as mock_processor:
+        # an instance of the mock
+        mock_instance = mock_processor.return_value
+        mock_instance.synthesize_with_custom_voice.return_value = "temp_output.wav"
+        mock_instance.synthesize_with_builtin_voice.return_value = "temp_output.wav"
+        mock_instance.synthesize_base_only.return_value = "temp_output.wav"
+        mock_instance.create_silence.return_value = "temp_silence.wav"
+        yield mock_processor
 
 
-class TestSynthesizeAudio:
-    """Test the synthesize_audio Celery task"""
+@pytest.fixture
+def mock_audio_synthesis_service():
+    with patch('app.workers.tasks_gpu.audio_service', autospec=True) as mock_service:
+        # Mock methods on the instance
+        mock_service.load_job_data.return_value = Mock()
+        mock_service.synthesize_audio.return_value = "path/to/audio.wav"
+        mock_service.upload_audio_file.return_value = "s3/path/to/audio.wav"
+        mock_service.cleanup_temp_files.return_value = None
+        yield mock_service
+
+
+# We need to import the task after the mocks are set up
+# to ensure the task uses the mocked services
+from app.workers.tasks_gpu import synthesize_audio, AudioSynthesisService, TTSException
+
+# --- Unit Tests for AudioSynthesisService ---
+
+@patch('app.workers.tasks_gpu.minio_service', autospec=True)
+@patch('app.workers.tasks_gpu.TTSProcessor', autospec=True)
+def test_service_load_job_data_custom_voice(mock_tts_processor, mock_minio_service):
+    """Test AudioSynthesisService loads data for a custom voice clone."""
+    db_session = Mock()
+    mock_job = Mock()
+    mock_job.s3_pptx_path = "ingest/my-job-uuid.pptx"
+    mock_job.voice_clone.s3_path = "voice-clones/user/custom.wav"
     
-    @pytest.fixture
-    def mock_dependencies(self):
-        """Mock all external dependencies"""
-        mocks = {}
+    with patch('app.workers.tasks_gpu.crud.get_presentation_job', return_value=mock_job):
+        # Mock MinIO get_object calls
+        mock_voice_response = Mock()
+        mock_voice_response.read.return_value = b"voice_data"
+        mock_voice_response.close.return_value = None
+        mock_voice_response.release_conn.return_value = None
         
-        with patch('app.workers.tasks_gpu.SessionLocal') as mock_session_local:
-            mock_db = Mock()
-            mock_session_local.return_value = mock_db
-            mocks['db'] = mock_db
-            
-            with patch('app.workers.tasks_gpu.crud') as mock_crud:
-                mocks['crud'] = mock_crud
-                
-                with patch('app.workers.tasks_gpu.minio_service') as mock_minio:
-                    mocks['minio_service'] = mock_minio
-                    
-                    with patch('app.workers.tasks_gpu.se_extractor') as mock_se_extractor, \
-                         patch('app.workers.tasks_gpu.tone_color_converter') as mock_converter, \
-                         patch('app.workers.tasks_gpu.librosa') as mock_librosa, \
-                         patch('app.workers.tasks_gpu.torch') as mock_torch, \
-                         patch('builtins.open') as mock_open:
-                        
-                        mocks['se_extractor'] = mock_se_extractor  
-                        mocks['tone_color_converter'] = mock_converter
-                        mocks['librosa'] = mock_librosa
-                        mocks['torch'] = mock_torch
-                        mocks['open'] = mock_open
-                        
-                        # Setup librosa mocks
-                        mock_librosa.load.return_value = (torch.zeros(24000).numpy(), 24000)
-                        mock_librosa.effects.trim.return_value = (torch.zeros(20000).numpy(), None)
-                        mock_librosa.output.write_wav.return_value = None
-                        
-                        # Setup torch mocks
-                        mock_torch.zeros.return_value = torch.zeros(24000)
-                        
-                        yield mocks
-    
-    def test_synthesize_audio_success(self, mock_dependencies):
-        """Test successful audio synthesis"""
-        job_id = 1
-        slide_number = 1
-        mocks = mock_dependencies
-        
-        # Setup mock job with voice clone
-        mock_voice_clone = Mock()
-        mock_voice_clone.s3_path = "/voice-clones/user1/voice.wav"
-        
-        mock_job = Mock()
-        mock_job.voice_clone = mock_voice_clone
-        mocks['crud'].get_presentation_job.return_value = mock_job
-        
-        # Setup MinIO responses
-        # Voice clone audio
-        mock_ref_response = Mock()
-        mock_ref_response.read.return_value = b"fake audio data"
-        mock_ref_response.close.return_value = None
-        mock_ref_response.release_conn.return_value = None
-        
-        # Note text
-        mock_note_response = Mock() 
-        mock_note_response.read.return_value = b"This is slide 1 content"
+        mock_note_response = Mock()
+        mock_note_response.read.return_value = b"note_text"
         mock_note_response.close.return_value = None
         mock_note_response.release_conn.return_value = None
         
         def get_object_side_effect(bucket, object_name):
-            if "voice.wav" in object_name:
-                return mock_ref_response
-            elif "notes" in object_name:
+            if bucket == "voice-clones":
+                return mock_voice_response
+            if bucket == "presentations":
                 return mock_note_response
-            return Mock()
+            raise ValueError(f"Unexpected bucket: {bucket}")
+
+        mock_minio_service.client.get_object.side_effect = get_object_side_effect
+
+        service = AudioSynthesisService(mock_tts_processor, mock_minio_service)
+        data = service.load_job_data(db_session, 1, 1)
+
+        assert not data.use_builtin_speaker
+        assert data.reference_audio_data == b"voice_data"
+        assert data.note_text == "note_text"
+
+
+@patch('app.workers.tasks_gpu.minio_service', autospec=True)
+@patch('app.workers.tasks_gpu.TTSProcessor', autospec=True)
+def test_service_synthesize_audio_fallback_logic(mock_tts_processor, mock_minio_service):
+    """Test that the service falls back from custom voice to base TTS, then to silence."""
+    service = AudioSynthesisService(mock_tts_processor.return_value, mock_minio_service)
+    mock_data = Mock()
+    mock_data.use_builtin_speaker = False
+
+    # Scenario 1: Custom voice fails, fallback to base TTS succeeds
+    mock_tts_processor.return_value.synthesize_with_custom_voice.side_effect = TTSException("Custom failed")
+    mock_tts_processor.return_value.synthesize_base_only.return_value = "base_tts.wav"
+
+    result = service.synthesize_audio(mock_data)
+    assert result == "base_tts.wav"
+    mock_tts_processor.return_value.synthesize_base_only.assert_called_once()
+    mock_tts_processor.return_value.create_silence.assert_not_called()
+
+    # Reset mocks
+    mock_tts_processor.return_value.synthesize_base_only.reset_mock()
+    
+    # Scenario 2: Both custom and base TTS fail, fallback to silence
+    mock_tts_processor.return_value.synthesize_with_custom_voice.side_effect = TTSException("Custom failed again")
+    mock_tts_processor.return_value.synthesize_base_only.side_effect = TTSException("Base failed too")
+    mock_tts_processor.return_value.create_silence.return_value = "silence.wav"
+    
+    result = service.synthesize_audio(mock_data)
+    assert result == "silence.wav"
+    mock_tts_processor.return_value.create_silence.assert_called_once()
+
+
+# --- Unit Tests for synthesize_audio Celery Task ---
+
+@patch('app.workers.tasks_gpu.SessionLocal')
+def test_task_success_flow(mock_session_local, mock_audio_synthesis_service):
+    """Test the successful execution flow of the synthesize_audio task."""
+    mock_db = mock_session_local.return_value
+    mock_task_context = Mock()
+    mock_task_context.request.id = "test_task_123"
+
+    with patch('app.workers.tasks_gpu.crud') as mock_crud:
+        # Use .s() to create a signature that can be called directly for testing
+        result = synthesize_audio.s(1, 1).apply(task_id=mock_task_context.request.id).get()
+
+        # Verify the service methods were called in order
+        mock_audio_synthesis_service.load_job_data.assert_called_once_with(mock_db, 1, 1)
+        mock_audio_synthesis_service.synthesize_audio.assert_called_once()
+        mock_audio_synthesis_service.upload_audio_file.assert_called_once()
+        mock_audio_synthesis_service.cleanup_temp_files.assert_called_once()
+
+        # Verify task status updates
+        assert mock_crud.update_task_status.call_count == 2
         
-        mocks['minio_service'].client.get_object.side_effect = get_object_side_effect
-        mocks['minio_service'].upload_file.return_value = "/presentations/1/audio/slide_1.wav"
+        # Final status should be 'completed'
+        final_status_call = mock_crud.update_task_status.call_args_list[1]
+        assert final_status_call.kwargs['status'] == 'completed'
         
-        # Setup OpenVoice mocks
-        mock_target_se = torch.zeros(256)
-        mocks['se_extractor'].get_se.return_value = (mock_target_se, "audio_name")
-        mocks['tone_color_converter'].convert.return_value = None
-        
-        # Setup file operations
-        mock_file_handle = Mock()
-        mocks['open'].return_value.__enter__.return_value = mock_file_handle
-        
-        # Execute task
-        result = synthesize_audio(job_id, slide_number)
-        
-        # Verify database operations
-        mocks['crud'].get_presentation_job.assert_called_once_with(mocks['db'], job_id)
-        
-        # Verify MinIO operations
-        assert mocks['minio_service'].client.get_object.call_count == 2  # voice + notes
-        mocks['minio_service'].upload_file.assert_called_once()
-        
-        # Verify audio processing
-        mocks['librosa'].load.assert_called_once()
-        mocks['librosa'].effects.trim.assert_called_once()
-        mocks['se_extractor'].get_se.assert_called_once()
-        mocks['tone_color_converter'].convert.assert_called_once()
-        
-        # Verify return value
         assert "Audio for slide 1 of job 1 created" in result
+
+
+@patch('app.workers.tasks_gpu.SessionLocal')
+def test_task_soft_time_limit_exceeded(mock_session_local, mock_audio_synthesis_service):
+    """Test the task's behavior on a SoftTimeLimitExceeded exception."""
+    mock_db = mock_session_local.return_value
     
-    def test_synthesize_audio_job_not_found(self, mock_dependencies):
-        """Test audio synthesis when job is not found"""
-        job_id = 999
-        slide_number = 1
-        mocks = mock_dependencies
-        
-        mocks['crud'].get_presentation_job.return_value = None
-        
-        # Execute task and expect exception
-        with pytest.raises(Exception) as exc_info:
-            synthesize_audio(job_id, slide_number)
-        
-        assert "Job 999 not found" in str(exc_info.value)
-        mocks['crud'].update_job_status.assert_not_called()
+    # Make the main synthesis call raise the timeout
+    mock_audio_synthesis_service.synthesize_audio.side_effect = SoftTimeLimitExceeded()
     
-    def test_synthesize_audio_empty_notes(self, mock_dependencies):
-        """Test audio synthesis with empty notes (silence)"""
-        job_id = 1
-        slide_number = 2
-        mocks = mock_dependencies
-        
-        # Setup mock job
-        mock_voice_clone = Mock()
-        mock_voice_clone.s3_path = "/voice-clones/user1/voice.wav"
-        mock_job = Mock()
-        mock_job.voice_clone = mock_voice_clone
-        mocks['crud'].get_presentation_job.return_value = mock_job
-        
-        # Setup MinIO responses - empty notes
-        mock_ref_response = Mock()
-        mock_ref_response.read.return_value = b"fake audio data"
-        mock_ref_response.close.return_value = None
-        mock_ref_response.release_conn.return_value = None
-        
-        mock_note_response = Mock()
-        mock_note_response.read.return_value = b"   "  # Only whitespace
-        mock_note_response.close.return_value = None
-        mock_note_response.release_conn.return_value = None
-        
-        def get_object_side_effect(bucket, object_name):
-            if "voice.wav" in object_name:
-                return mock_ref_response
-            elif "notes" in object_name:
-                return mock_note_response
-            return Mock()
-        
-        mocks['minio_service'].client.get_object.side_effect = get_object_side_effect
-        mocks['minio_service'].upload_file.return_value = "/presentations/1/audio/slide_2.wav"
-        
-        # Setup file operations
-        mock_file_handle = Mock()
-        mocks['open'].return_value.__enter__.return_value = mock_file_handle
-        
-        # Execute task
-        result = synthesize_audio(job_id, slide_number)
-        
-        # Verify that silence handling was triggered
-        # Should create silent audio instead of using TTS
-        mocks['librosa'].output.write_wav.assert_called()
-        
-        # Should not call tone_color_converter for silence
-        mocks['tone_color_converter'].convert.assert_not_called()
-        
-        assert "Audio for slide 2 of job 1 created" in result
+    # Mock job data loading for the fallback path
+    mock_job_data = Mock()
+    mock_job_data.job = Mock()
+    mock_audio_synthesis_service.load_job_data.return_value = mock_job_data
     
-    def test_synthesize_audio_with_silence_tag(self, mock_dependencies):
-        """Test audio synthesis with [SILENCE] tag"""
-        job_id = 1
-        slide_number = 3
-        mocks = mock_dependencies
+    with patch('app.workers.tasks_gpu.crud') as mock_crud, \
+         patch('app.workers.tasks_gpu.tts_processor') as mock_global_tts_processor:
         
-        # Setup mock job
-        mock_voice_clone = Mock()
-        mock_voice_clone.s3_path = "/voice-clones/user1/voice.wav"
-        mock_job = Mock()
-        mock_job.voice_clone = mock_voice_clone
-        mocks['crud'].get_presentation_job.return_value = mock_job
+        result = synthesize_audio.s(1, 1).apply().get()
+
+        # Verify that the fallback to create silence was triggered
+        mock_global_tts_processor.create_silence.assert_called_once()
         
-        # Setup MinIO responses - silence tag
-        mock_ref_response = Mock()
-        mock_ref_response.read.return_value = b"fake audio data"
-        mock_ref_response.close.return_value = None
-        mock_ref_response.release_conn.return_value = None
+        # Verify that the fallback audio was uploaded
+        mock_audio_synthesis_service.upload_audio_file.assert_called_once()
         
-        mock_note_response = Mock()
-        mock_note_response.read.return_value = b"[SILENCE]"
-        mock_note_response.close.return_value = None
-        mock_note_response.release_conn.return_value = None
+        # Verify the task status was updated to completed with a timeout message
+        final_status_call = mock_crud.update_task_status.call_args_list[1]
+        assert final_status_call.kwargs['status'] == 'completed'
+        assert "timed out" in final_status_call.kwargs['progress_message']
         
-        def get_object_side_effect(bucket, object_name):
-            if "voice.wav" in object_name:
-                return mock_ref_response
-            elif "notes" in object_name:
-                return mock_note_response
-            return Mock()
+        assert "Timeout fallback audio" in result
+
+
+@patch('app.workers.tasks_gpu.SessionLocal')
+def test_task_general_exception(mock_session_local, mock_audio_synthesis_service):
+    """Test the task's behavior on a generic exception."""
+    mock_db = mock_session_local.return_value
+
+    # Make data loading fail
+    error_message = "Database connection failed"
+    mock_audio_synthesis_service.load_job_data.side_effect = Exception(error_message)
+
+    with pytest.raises(Exception, match=error_message), \
+         patch('app.workers.tasks_gpu.crud') as mock_crud:
         
-        mocks['minio_service'].client.get_object.side_effect = get_object_side_effect
-        mocks['minio_service'].upload_file.return_value = "/presentations/1/audio/slide_3.wav"
-        
-        # Execute task
-        result = synthesize_audio(job_id, slide_number)
-        
-        # Verify silence was created
-        mocks['torch'].zeros.assert_called_with(24000)  # 1 second of silence at 24kHz
-        mocks['librosa'].output.write_wav.assert_called()
-        
-        # Should not process reference audio or use TTS for silence
-        mocks['tone_color_converter'].convert.assert_not_called()
-        
-        assert "Audio for slide 3 of job 1 created" in result
-    
-    def test_synthesize_audio_minio_error(self, mock_dependencies):
-        """Test audio synthesis with MinIO error"""
-        from minio.error import S3Error
-        
-        job_id = 1
-        slide_number = 1
-        mocks = mock_dependencies
-        
-        # Setup mock job
-        mock_job = Mock()
-        mocks['crud'].get_presentation_job.return_value = mock_job
-        
-        # Make MinIO raise error
-        mocks['minio_service'].client.get_object.side_effect = S3Error(
-            "NoSuchKey",
-            "The specified key does not exist",
-            resource="voice.wav",
-            request_id="123",
-            host_id="456"
+        synthesize_audio.s(1, 1).apply().get()
+
+        # Verify that the task and job statuses were updated to 'failed'
+        mock_crud.update_task_status.assert_called_once_with(
+            mock_db,
+            celery_task_id=synthesize_audio.request.id,
+            status='failed',
+            error_message=error_message
         )
-        
-        # Execute task and expect exception
-        with pytest.raises(S3Error):
-            synthesize_audio(job_id, slide_number)
-        
-        # Verify job was marked as failed
-        mocks['crud'].update_job_status.assert_called_with(mocks['db'], job_id, "failed")
-    
-    def test_synthesize_audio_openvoice_error(self, mock_dependencies):
-        """Test audio synthesis with OpenVoice processing error"""
-        job_id = 1
-        slide_number = 1
-        mocks = mock_dependencies
-        
-        # Setup mock job
-        mock_voice_clone = Mock()
-        mock_voice_clone.s3_path = "/voice-clones/user1/voice.wav"
-        mock_job = Mock()
-        mock_job.voice_clone = mock_voice_clone
-        mocks['crud'].get_presentation_job.return_value = mock_job
-        
-        # Setup MinIO responses
-        mock_ref_response = Mock()
-        mock_ref_response.read.return_value = b"fake audio data"
-        mock_ref_response.close.return_value = None
-        mock_ref_response.release_conn.return_value = None
-        
-        mock_note_response = Mock()
-        mock_note_response.read.return_value = b"Test content"
-        mock_note_response.close.return_value = None
-        mock_note_response.release_conn.return_value = None
-        
-        def get_object_side_effect(bucket, object_name):
-            if "voice.wav" in object_name:
-                return mock_ref_response
-            elif "notes" in object_name:
-                return mock_note_response
-            return Mock()
-        
-        mocks['minio_service'].client.get_object.side_effect = get_object_side_effect
-        
-        # Make se_extractor raise error
-        mocks['se_extractor'].get_se.side_effect = Exception("OpenVoice processing error")
-        
-        # Execute task and expect exception
-        with pytest.raises(Exception):
-            synthesize_audio(job_id, slide_number)
-        
-        # Verify job was marked as failed
-        mocks['crud'].update_job_status.assert_called_with(mocks['db'], job_id, "failed")
-    
-    def test_synthesize_audio_file_upload_error(self, mock_dependencies):
-        """Test audio synthesis with file upload error"""
-        job_id = 1
-        slide_number = 1
-        mocks = mock_dependencies
-        
-        # Setup successful processing until upload
-        mock_voice_clone = Mock()
-        mock_voice_clone.s3_path = "/voice-clones/user1/voice.wav"
-        mock_job = Mock()
-        mock_job.voice_clone = mock_voice_clone
-        mocks['crud'].get_presentation_job.return_value = mock_job
-        
-        # Setup MinIO responses
-        mock_ref_response = Mock()
-        mock_ref_response.read.return_value = b"fake audio data"
-        mock_ref_response.close.return_value = None
-        mock_ref_response.release_conn.return_value = None
-        
-        mock_note_response = Mock()
-        mock_note_response.read.return_value = b"Test content"
-        mock_note_response.close.return_value = None
-        mock_note_response.release_conn.return_value = None
-        
-        def get_object_side_effect(bucket, object_name):
-            if "voice.wav" in object_name:
-                return mock_ref_response
-            elif "notes" in object_name:
-                return mock_note_response
-            return Mock()
-        
-        mocks['minio_service'].client.get_object.side_effect = get_object_side_effect
-        
-        # Setup OpenVoice mocks
-        mock_target_se = torch.zeros(256)
-        mocks['se_extractor'].get_se.return_value = (mock_target_se, "audio_name")
-        
-        # Make file upload fail
-        mocks['minio_service'].upload_file.side_effect = Exception("Upload failed")
-        
-        # Execute task and expect exception
-        with pytest.raises(Exception):
-            synthesize_audio(job_id, slide_number)
-        
-        # Verify job was marked as failed
-        mocks['crud'].update_job_status.assert_called_with(mocks['db'], job_id, "failed")
-    
-    @patch('os.path.getsize')
-    def test_synthesize_audio_file_operations(self, mock_getsize, mock_dependencies):
-        """Test file operations during audio synthesis"""
-        mock_getsize.return_value = 1024  # 1KB file
-        
-        job_id = 1
-        slide_number = 1
-        mocks = mock_dependencies
-        
-        # Setup successful scenario
-        mock_voice_clone = Mock()
-        mock_voice_clone.s3_path = "/voice-clones/user1/voice.wav"
-        mock_job = Mock()
-        mock_job.voice_clone = mock_voice_clone
-        mocks['crud'].get_presentation_job.return_value = mock_job
-        
-        # Setup MinIO responses
-        mock_ref_response = Mock()
-        mock_ref_response.read.return_value = b"fake audio data"
-        mock_ref_response.close.return_value = None
-        mock_ref_response.release_conn.return_value = None
-        
-        mock_note_response = Mock()
-        mock_note_response.read.return_value = b"Test content"
-        mock_note_response.close.return_value = None
-        mock_note_response.release_conn.return_value = None
-        
-        def get_object_side_effect(bucket, object_name):
-            if "voice.wav" in object_name:
-                return mock_ref_response
-            elif "notes" in object_name:
-                return mock_note_response
-            return Mock()
-        
-        mocks['minio_service'].client.get_object.side_effect = get_object_side_effect
-        mocks['minio_service'].upload_file.return_value = "/presentations/1/audio/slide_1.wav"
-        
-        # Setup OpenVoice mocks
-        mock_target_se = torch.zeros(256)
-        mocks['se_extractor'].get_se.return_value = (mock_target_se, "audio_name")
-        
-        # Execute task
-        result = synthesize_audio(job_id, slide_number)
-        
-        # Verify file operations
-        # Should open files for writing reference audio and reading for upload
-        assert mocks['open'].call_count >= 2  # At least temp files + upload file
-        
-        # Verify getsize was called for upload
-        mock_getsize.assert_called()
-        
-        assert "created" in result
+        mock_crud.update_job_status.assert_called_once_with(
+            mock_db,
+            1,
+            'failed',
+            error_message=f"Audio synthesis failed for slide 1: {error_message}"
+        )

@@ -15,3 +15,4 @@ sqlalchemy-utils>=0.38.0
 # Mocking and fixtures
 factory-boy>=3.2.0
 Faker>=18.0.0
+Pillow>=9.0.0
