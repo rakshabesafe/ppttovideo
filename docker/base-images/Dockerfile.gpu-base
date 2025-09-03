@@ -21,8 +21,8 @@ RUN pip install --no-cache-dir \
 
 # Install OpenVoice and MeloTTS (heavy downloads)
 RUN git clone https://github.com/myshell-ai/OpenVoice.git /app/OpenVoice
-RUN python -m unidic download
 RUN pip install --no-cache-dir -e git+https://github.com/myshell-ai/MeloTTS.git#egg=MeloTTS
+RUN python -m unidic download
 RUN cd /app/OpenVoice && pip install -e .
 
 # Download OpenVoice checkpoints once
