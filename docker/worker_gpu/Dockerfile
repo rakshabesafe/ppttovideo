@@ -30,9 +30,11 @@ RUN python -c "import nltk; nltk.download('averaged_perceptron_tagger_eng'); nlt
 RUN python -c "from transformers import BertTokenizer, BertModel; BertTokenizer.from_pretrained('bert-base-uncased'); BertModel.from_pretrained('bert-base-uncased'); print('BERT model cached successfully')"
 
 # Install OpenVoice and its dependencies  
-RUN git clone https://github.com/myshell-ai/OpenVoice.git /OpenVoice
-# Install OpenVoice from the cloned repo
-RUN cd /OpenVoice && pip install -e .
+RUN git clone https://github.com/myshell-ai/OpenVoice.git /OpenVoice && \
+    cd /OpenVoice && \
+    ls -la && \
+    pip install -e . && \
+    python -c "import openvoice; print('OpenVoice installed successfully')"
 
 # Download and extract OpenVoice V2 checkpoints
 RUN curl -L -o checkpoints_v2.zip "https://myshell-public-repo-host.s3.amazonaws.com/openvoice/checkpoints_v2_0417.zip" && \

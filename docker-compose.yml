@@ -65,6 +65,7 @@ services:
       - "18000:8000"
     volumes:
       - ./app:/app
+      - ./templates:/templates
     environment:
       - DATABASE_URL=postgresql://${POSTGRES_USER:-user}:${POSTGRES_PASSWORD:-password}@postgres:5432/${POSTGRES_DB:-presentation_gen_db}
       - CELERY_BROKER_URL=redis://redis:6379/0
@@ -109,7 +110,6 @@ services:
       - ./app:/app
       - ${WORKER_GPU_NLTK_DATA:-./data/nltk_data}:/root/nltk_data
       - ${WORKER_GPU_HF_CACHE:-./data/huggingface_cache}:/root/.cache/huggingface/hub
-      - ${WORKER_GPU_OPENVOKE_CHECKPOINTS:-./data/checkpoints_v2}:/checkpoints_v2
     environment:
       - DATABASE_URL=postgresql://${POSTGRES_USER:-user}:${POSTGRES_PASSWORD:-password}@postgres:5432/${POSTGRES_DB:-presentation_gen_db}
       - CELERY_BROKER_URL=redis://redis:6379/0
@@ -121,14 +121,13 @@ services:
       - NVIDIA_DRIVER_CAPABILITIES=${NVIDIA_DRIVER_CAPABILITIES:-compute,utility}
       - TTS_SOFT_TIME_LIMIT=${TTS_SOFT_TIME_LIMIT:-300}
       - TTS_HARD_TIME_LIMIT=${TTS_HARD_TIME_LIMIT:-360}
-    runtime: ${GPU_RUNTIME:-runc}
+    runtime: nvidia
     deploy:
       resources:
         reservations:
           devices:
-            - driver: nvidia
-              count: ${GPU_COUNT:-1}
-              capabilities: [gpu]
+            - capabilities: [gpu]
+              count: all
     restart: unless-stopped
 
   libreoffice:

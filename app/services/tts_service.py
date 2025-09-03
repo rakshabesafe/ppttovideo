@@ -22,12 +22,23 @@ from abc import ABC, abstractmethod
 sys.path.append('/src/melotts')
 
 # Import required libraries
+TTS = None
+se_extractor = None
+ToneColorConverter = None
+
+try:
+    from melo.api import TTS as MeloTTS
+    TTS = MeloTTS
+    print("MeloTTS imported successfully")
+except ImportError as e:
+    print(f"Warning: MeloTTS not available: {e}")
+
 try:
     from openvoice import se_extractor
     from openvoice.api import ToneColorConverter
-    from melo.api import TTS
+    print("OpenVoice imported successfully")
 except ImportError as e:
-    print(f"Warning: TTS dependencies not available: {e}")
+    print(f"Warning: OpenVoice not available: {e}")
 
 
 class TTSException(Exception):
@@ -131,6 +142,10 @@ class MeloTTSEngine:
         if self.tts_model is not None:
             return  # Already initialized
             
+        # Check if TTS is available
+        if TTS is None:
+            raise MeloTTSException("MeloTTS initialization failed: TTS module not available. Please ensure MeloTTS is properly installed.")
+            
         try:
             print("Initializing MeloTTS for speech synthesis...")
             
@@ -154,7 +169,7 @@ class MeloTTSEngine:
             raise MeloTTSException(f"MeloTTS initialization failed: {e}")
     
     def synthesize_to_file(self, text: str, output_path: str, speed: float = 1.0, 
-                          speaker_id: int = 0) -> str:
+                          speaker_id = 0) -> str:
         """
         Synthesize text to audio file using MeloTTS
         
@@ -162,7 +177,7 @@ class MeloTTSEngine:
             text: Text to synthesize
             output_path: Path where audio file should be saved
             speed: Speech speed (0.5-2.0)
-            speaker_id: Speaker ID to use
+            speaker_id: Speaker ID to use (string like 'EN_INDIA' or int)
             
         Returns:
             Path to generated audio file
@@ -191,6 +206,16 @@ class MeloTTSEngine:
                 quiet=True
             )
             
+            # Check base TTS audio quality (no pre-processing)
+            try:
+                import soundfile as sf
+                import numpy as np
+                audio, sr = sf.read(output_path)
+                max_amp = np.max(np.abs(audio))
+                print(f"Base TTS audio level: {max_amp:.4f}")
+            except Exception as e:
+                print(f"Warning: Base TTS audio check failed: {e}")
+            
             if not os.path.exists(output_path):
                 raise MeloTTSException("Audio file was not created")
                 
@@ -218,16 +243,20 @@ class OpenVoiceCloner:
         if self.tone_converter is not None:
             return  # Already initialized
             
+        # Check if OpenVoice is available
+        if ToneColorConverter is None:
+            raise OpenVoiceException("OpenVoice initialization failed: ToneColorConverter module not available. Please ensure OpenVoice is properly installed.")
+            
         try:
             print("Initializing OpenVoice ToneColorConverter...")
             self.tone_converter = ToneColorConverter(
-                'checkpoints_v2/checkpoints_v2/converter/config.json', 
+                '/checkpoints_v2/checkpoints_v2/converter/config.json', 
                 device=self.device
             )
             
             # Load source speaker embedding (used for all conversions)
             self.source_se = torch.load(
-                'checkpoints_v2/checkpoints_v2/base_speakers/ses/en-default.pth',
+                '/checkpoints_v2/checkpoints_v2/base_speakers/ses/en-default.pth',
                 map_location=self.device
             )
             print("OpenVoice initialized successfully")
@@ -290,7 +319,7 @@ class OpenVoiceCloner:
             target_se, audio_name = se_extractor.get_se(
                 trimmed_path, 
                 self.tone_converter, 
-                vad=True
+                vad=False
             )
             
             # Clean up temporary files
@@ -323,16 +352,60 @@ class OpenVoiceCloner:
         try:
             print("Applying voice cloning with OpenVoice...")
             
+            # Check base audio before conversion
+            try:
+                import soundfile as sf
+                import numpy as np
+                base_audio, sr = sf.read(base_audio_path)
+                base_max_amp = np.max(np.abs(base_audio))
+                print(f"Base audio before voice cloning: max_amp={base_max_amp:.4f}, duration={len(base_audio)/sr:.2f}s")
+            except Exception as e:
+                print(f"Warning: Could not analyze base audio: {e}")
+            
+            # Apply voice conversion with improved quality settings
             self.tone_converter.convert(
                 audio_src_path=base_audio_path,
                 src_se=self.source_se,
                 tgt_se=target_embedding,
                 output_path=output_path,
-                message="Converting voice..."
+                message="Converting voice...",
+                tau=0.8  # Increased tau for stronger signal
             )
             
             if not os.path.exists(output_path):
                 raise OpenVoiceException("Cloned audio file was not created")
+
+            # Add more detailed logging of the cloned audio before normalization
+            try:
+                import soundfile as sf
+                import numpy as np
+                audio, sr = sf.read(output_path)
+                max_amp = np.max(np.abs(audio))
+                print(f"Cloned audio BEFORE normalization: max_amp={max_amp:.4f}")
+            except Exception as e:
+                print(f"Warning: Could not analyze cloned audio before normalization: {e}")
+            
+            # Simplified audio normalization 
+            try:
+                import soundfile as sf
+                import numpy as np
+                audio, sr = sf.read(output_path)
+                
+                max_amp = np.max(np.abs(audio))
+                if max_amp > 0.001:  # Only process if not essentially silent
+                    # Conservative normalization to avoid over-amplification
+                    if max_amp < 0.5:  # Only normalize if quiet
+                        target_level = 0.7  # Normalize to a standard level
+                        normalized_audio = audio * (target_level / max_amp)
+                        sf.write(output_path, normalized_audio, sr)
+                        print(f"Audio normalized: {max_amp:.4f} -> {target_level:.4f}")
+                    else:
+                        print(f"Audio level good: {max_amp:.4f}, no normalization needed")
+                else:
+                    print("Warning: Audio has near-zero amplitude")
+                
+            except Exception as norm_error:
+                print(f"Warning: Audio normalization failed: {norm_error}")
             
             print("Voice cloning completed successfully")
             return output_path
@@ -376,25 +449,50 @@ class TTSProcessor:
             # Parse text tags
             clean_text, emotion, speed, pitch = self.text_processor.parse_note_text_tags(text)
             
-            # Generate base TTS audio
-            temp_base = f"temp_base_{int(time.time())}.wav"
-            self.melo_engine.synthesize_to_file(
-                text=clean_text,
-                output_path=temp_base,
-                speed=speed
-            )
+            # Map speaker names to MeloTTS speakers
+            melotts_speakers = {
+                'en-default': 'EN-Default',
+                'en-us': 'EN-US', 
+                'en-br': 'EN-BR',
+                'en-india': 'EN_INDIA',
+                'en-au': 'EN-AU'
+            }
             
-            # Load built-in voice embedding
-            target_embedding = self.voice_cloner.load_builtin_voice(speaker_name)
-            
-            # Apply voice cloning
-            self.voice_cloner.clone_voice(temp_base, target_embedding, output_path)
-            
-            # Clean up temporary file
-            if os.path.exists(temp_base):
-                os.remove(temp_base)
+            # Check if this is a MeloTTS native speaker (fast path)
+            if speaker_name.lower() in melotts_speakers:
+                melotts_speaker = melotts_speakers[speaker_name.lower()]
+                print(f"Using native MeloTTS speaker: {melotts_speaker}")
                 
-            return output_path
+                # Use MeloTTS directly with the specific speaker
+                return self.melo_engine.synthesize_to_file(
+                    text=clean_text,
+                    output_path=output_path,
+                    speed=speed,
+                    speaker_id=self.melo_engine.speaker_ids[melotts_speaker]
+                )
+            else:
+                # Use OpenVoice cloning for non-MeloTTS speakers (slower)
+                print(f"Using OpenVoice cloning for speaker: {speaker_name}")
+                
+                # Generate base TTS audio
+                temp_base = f"temp_base_{int(time.time())}.wav"
+                self.melo_engine.synthesize_to_file(
+                    text=clean_text,
+                    output_path=temp_base,
+                    speed=speed
+                )
+                
+                # Load built-in voice embedding
+                target_embedding = self.voice_cloner.load_builtin_voice(speaker_name)
+                
+                # Apply voice cloning
+                self.voice_cloner.clone_voice(temp_base, target_embedding, output_path)
+                
+                # Clean up temporary file
+                if os.path.exists(temp_base):
+                    os.remove(temp_base)
+                    
+                return output_path
             
         except Exception as e:
             raise TTSException(f"Built-in voice synthesis failed: {e}")

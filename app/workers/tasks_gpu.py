@@ -144,6 +144,7 @@ class AudioSynthesisService:
             
             if data.use_builtin_speaker:
                 # Use built-in speaker with voice cloning
+                print(f"Using built-in speaker: {data.speaker_name}")
                 return self.tts_processor.synthesize_with_builtin_voice(
                     text=data.note_text,
                     speaker_name=data.speaker_name,
@@ -151,6 +152,7 @@ class AudioSynthesisService:
                 )
             else:
                 # Use custom voice cloning
+                print("Using custom voice cloning")
                 return self.tts_processor.synthesize_with_custom_voice(
                     text=data.note_text,
                     reference_audio_data=data.reference_audio_data,

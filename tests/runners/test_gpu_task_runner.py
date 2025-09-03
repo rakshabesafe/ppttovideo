@@ -81,17 +81,39 @@ def main(job_id: int, slide_number: int):
         print(f"Error: {async_result.traceback}")
 
 if __name__ == '__main__':
-    # --- IMPORTANT: Set these values before running ---
-    # You must have a job with this ID in your database.
-    # The job must have notes for the specified slide in MinIO.
-    TEST_JOB_ID = 1
-    TEST_SLIDE_NUMBER = 1
-
+    import sys
+    
+    # Default values
+    DEFAULT_JOB_ID = 1
+    DEFAULT_SLIDE_NUMBER = 1
+    
+    # Parse command line arguments
+    job_id = DEFAULT_JOB_ID
+    slide_number = DEFAULT_SLIDE_NUMBER
+    
+    if len(sys.argv) >= 2:
+        try:
+            job_id = int(sys.argv[1])
+        except ValueError:
+            print(f"Error: Invalid job_id '{sys.argv[1]}'. Using default: {DEFAULT_JOB_ID}")
+            job_id = DEFAULT_JOB_ID
+    
+    if len(sys.argv) >= 3:
+        try:
+            slide_number = int(sys.argv[2])
+        except ValueError:
+            print(f"Error: Invalid slide_number '{sys.argv[2]}'. Using default: {DEFAULT_SLIDE_NUMBER}")
+            slide_number = DEFAULT_SLIDE_NUMBER
+    
+    if len(sys.argv) > 3:
+        print("Usage: python test_gpu_task_runner.py [job_id] [slide_number]")
+        print(f"Using provided arguments: job_id={job_id}, slide_number={slide_number}")
+    
     print("NOTE: Please ensure the prerequisite data is set up before running.")
-    print(f"Prerequisites: Job ID {TEST_JOB_ID} must exist and have notes for slide {TEST_SLIDE_NUMBER}.")
+    print(f"Prerequisites: Job ID {job_id} must exist and have notes for slide {slide_number}.")
 
     try:
-        main(TEST_JOB_ID, TEST_SLIDE_NUMBER)
+        main(job_id, slide_number)
     except Exception as e:
         print(f"\nAn error occurred: {e}")
         print("Please ensure the Docker containers (especially Redis and the GPU worker) are running.")
