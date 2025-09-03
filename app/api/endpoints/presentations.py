@@ -1,3 +1,4 @@
+import os
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form
 from sqlalchemy.orm import Session
 from app import crud, schemas
@@ -101,6 +102,47 @@ def download_video(job_id: int, db: Session = Depends(get_db)):
 
     except S3Error as e:
         raise HTTPException(status_code=500, detail=f"MinIO error: {e}")
+
+
+@router.get("/download/audio/{job_id}/{slide_number}")
+def download_slide_audio(job_id: int, slide_number: int, db: Session = Depends(get_db)):
+    db_job = crud.get_presentation_job(db, job_id=job_id)
+    if db_job is None:
+        raise HTTPException(status_code=404, detail="Job not found")
+
+    # Construct the object name from the s3_pptx_path
+    pptx_filename = os.path.basename(db_job.s3_pptx_path)
+    job_uuid = os.path.splitext(pptx_filename)[0]
+    
+    object_name = f"{job_uuid}/audio/slide_{slide_number}.wav"
+    bucket_name = "presentations"
+
+    try:
+        # Get file data
+        response = minio_service.client.get_object(bucket_name, object_name)
+        audio_data = response.read()
+        response.close()
+        response.release_conn()
+
+        headers = {
+            "Content-Disposition": f"attachment; filename=slide_{slide_number}.wav",
+            "Content-Length": str(len(audio_data)),
+            "Access-Control-Allow-Origin": "*",
+        }
+
+        from fastapi.responses import Response
+        return Response(
+            content=audio_data,
+            media_type="audio/wav",
+            headers=headers
+        )
+
+    except S3Error as e:
+        if e.code == "NoSuchKey":
+            raise HTTPException(status_code=404, detail=f"Audio for slide {slide_number} not found.")
+        else:
+            raise HTTPException(status_code=500, detail=f"MinIO error: {e}")
+
 
 @router.get("/progress/{job_id}")
 def get_job_progress(job_id: int, db: Session = Depends(get_db)):

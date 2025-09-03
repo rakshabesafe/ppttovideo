@@ -377,6 +377,11 @@
                         const taskTitle = task.slide_number ? 
                             `Slide ${task.slide_number}` : 
                             taskType.replace('_', ' ');
+
+                        let downloadButton = '';
+                        if (task.task_type === 'audio_synthesis' && task.status === 'completed') {
+                            downloadButton = `<a href="/api/presentations/download/audio/${job.id}/${task.slide_number}" class="btn btn-secondary" style="margin-left: 10px;" download>Download Audio</a>`;
+                        }
                         
                         modalContent += `
                             <div class="task-item ${taskClass}">
@@ -385,7 +390,10 @@
                                     ${task.progress_message ? `<br><small>${task.progress_message}</small>` : ''}
                                     ${task.error_message ? `<br><small style="color: #dc3545;">${task.error_message}</small>` : ''}
                                 </div>
-                                <span class="status-badge status-${task.status}">${task.status}</span>
+                                <div>
+                                    <span class="status-badge status-${task.status}">${task.status}</span>
+                                    ${downloadButton}
+                                </div>
                             </div>
                         `;
                     });
