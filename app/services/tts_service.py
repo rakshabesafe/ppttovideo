@@ -164,6 +164,7 @@ class MeloTTSEngine:
             self.tts_model = TTS(language='EN', device=self.device)
             self.speaker_ids = self.tts_model.hps.data.spk2id
             print(f"MeloTTS initialized successfully with speakers: {list(self.speaker_ids.keys())}")
+            print(f"EN_INDIA speaker ID: {self.speaker_ids.get('EN_INDIA', 'Not found')}")
             
         except Exception as e:
             raise MeloTTSException(f"MeloTTS initialization failed: {e}")
@@ -239,7 +240,7 @@ class OpenVoiceCloner:
         self.source_se = None  # Source speaker embedding (loaded once)
         
     def initialize(self) -> None:
-        """Initialize OpenVoice components"""
+        """Initialize OpenVoice components following the 3-step recommendation"""
         if self.tone_converter is not None:
             return  # Already initialized
             
@@ -249,17 +250,21 @@ class OpenVoiceCloner:
             
         try:
             print("Initializing OpenVoice ToneColorConverter...")
+            # Step 1: Initialize ToneColorConverter (proper 3-step process)
             self.tone_converter = ToneColorConverter(
                 '/checkpoints_v2/checkpoints_v2/converter/config.json', 
                 device=self.device
             )
+            # Load the checkpoint (missing in previous implementation)
+            self.tone_converter.load_ckpt('/checkpoints_v2/checkpoints_v2/converter/checkpoint.pth')
             
-            # Load source speaker embedding (used for all conversions)
+            # Load source speaker embedding for English Indian base speaker
+            # Using EN_INDIA as recommended base speaker for English Indian voice cloning
             self.source_se = torch.load(
-                '/checkpoints_v2/checkpoints_v2/base_speakers/ses/en-default.pth',
+                '/checkpoints_v2/checkpoints_v2/base_speakers/ses/en-india.pth',
                 map_location=self.device
             )
-            print("OpenVoice initialized successfully")
+            print("OpenVoice initialized successfully with EN_INDIA base speaker")
             
         except Exception as e:
             raise OpenVoiceException(f"OpenVoice initialization failed: {e}")
@@ -284,7 +289,7 @@ class OpenVoiceCloner:
     
     def extract_voice_from_audio(self, audio_data: bytes, file_extension: str) -> torch.Tensor:
         """
-        Extract voice embedding from reference audio
+        Extract voice embedding from reference audio following OpenVoice Step 2
         
         Args:
             audio_data: Raw audio file data
@@ -302,32 +307,20 @@ class OpenVoiceCloner:
             with open(temp_filename, "wb") as f:
                 f.write(audio_data)
             
-            # Load and trim silence
-            audio, sr = librosa.load(temp_filename, sr=24000)
-            audio_trimmed, _ = librosa.effects.trim(audio, top_db=20)
-            
-            # Check if audio is too short after trimming
-            min_duration = 3.0  # 3 seconds minimum
-            if len(audio_trimmed) < min_duration * sr:
-                audio_trimmed = audio  # Use original if trimmed is too short
-            
-            # Save trimmed audio
-            trimmed_path = "temp_ref_trimmed.wav"
-            sf.write(trimmed_path, audio_trimmed, sr)
-            
-            # Extract voice embedding
+            # Step 2: Extract tone color embedding from entire reference audio
+            # Following OpenVoice recommendation - entire MP3 file can be given to se_extractor
+            print("Extracting tone color embedding from reference audio...")
             target_se, audio_name = se_extractor.get_se(
-                trimmed_path, 
+                temp_filename,  # Use original file directly, not trimmed
                 self.tone_converter, 
-                vad=False
+                vad=True  # Enable VAD for better voice activity detection
             )
             
             # Clean up temporary files
-            for temp_file in [temp_filename, trimmed_path]:
-                if os.path.exists(temp_file):
-                    os.remove(temp_file)
+            if os.path.exists(temp_filename):
+                os.remove(temp_filename)
             
-            print("Voice embedding extracted successfully")
+            print("Voice embedding extracted successfully using OpenVoice Step 2")
             return target_se
             
         except Exception as e:
@@ -350,64 +343,19 @@ class OpenVoiceCloner:
             self.initialize()
             
         try:
-            print("Applying voice cloning with OpenVoice...")
-            
-            # Check base audio before conversion
-            try:
-                import soundfile as sf
-                import numpy as np
-                base_audio, sr = sf.read(base_audio_path)
-                base_max_amp = np.max(np.abs(base_audio))
-                print(f"Base audio before voice cloning: max_amp={base_max_amp:.4f}, duration={len(base_audio)/sr:.2f}s")
-            except Exception as e:
-                print(f"Warning: Could not analyze base audio: {e}")
-            
-            # Apply voice conversion with improved quality settings
+            # Apply voice conversion
             self.tone_converter.convert(
                 audio_src_path=base_audio_path,
                 src_se=self.source_se,
                 tgt_se=target_embedding,
                 output_path=output_path,
                 message="Converting voice...",
-                tau=0.8  # Increased tau for stronger signal
+                tau=0.8
             )
             
             if not os.path.exists(output_path):
                 raise OpenVoiceException("Cloned audio file was not created")
-
-            # Add more detailed logging of the cloned audio before normalization
-            try:
-                import soundfile as sf
-                import numpy as np
-                audio, sr = sf.read(output_path)
-                max_amp = np.max(np.abs(audio))
-                print(f"Cloned audio BEFORE normalization: max_amp={max_amp:.4f}")
-            except Exception as e:
-                print(f"Warning: Could not analyze cloned audio before normalization: {e}")
             
-            # Simplified audio normalization 
-            try:
-                import soundfile as sf
-                import numpy as np
-                audio, sr = sf.read(output_path)
-                
-                max_amp = np.max(np.abs(audio))
-                if max_amp > 0.001:  # Only process if not essentially silent
-                    # Conservative normalization to avoid over-amplification
-                    if max_amp < 0.5:  # Only normalize if quiet
-                        target_level = 0.7  # Normalize to a standard level
-                        normalized_audio = audio * (target_level / max_amp)
-                        sf.write(output_path, normalized_audio, sr)
-                        print(f"Audio normalized: {max_amp:.4f} -> {target_level:.4f}")
-                    else:
-                        print(f"Audio level good: {max_amp:.4f}, no normalization needed")
-                else:
-                    print("Warning: Audio has near-zero amplitude")
-                
-            except Exception as norm_error:
-                print(f"Warning: Audio normalization failed: {norm_error}")
-            
-            print("Voice cloning completed successfully")
             return output_path
             
         except Exception as e:
@@ -501,6 +449,7 @@ class TTSProcessor:
                                    file_extension: str, output_path: str) -> str:
         """
         Synthesize speech using a custom voice from reference audio
+        Following OpenVoice 3-step process with EN_INDIA base speaker
         
         Args:
             text: Text to synthesize
@@ -515,20 +464,35 @@ class TTSProcessor:
             # Parse text tags
             clean_text, emotion, speed, pitch = self.text_processor.parse_note_text_tags(text)
             
-            # Generate base TTS audio
+            # Step 3: Generate base TTS audio using MeloTTS EN_INDIA speaker
+            # Following OpenVoice recommendation to use English Indian as base speaker
             temp_base = f"temp_base_{int(time.time())}.wav"
+            
+            # Use EN_INDIA speaker ID for base synthesis
+            # Get speaker ID safely to avoid HParams error
+            try:
+                if hasattr(self.melo_engine.speaker_ids, 'get'):
+                    en_india_speaker_id = self.melo_engine.speaker_ids.get('EN_INDIA', 0)
+                else:
+                    en_india_speaker_id = self.melo_engine.speaker_ids['EN_INDIA']
+                print(f"Using EN_INDIA speaker (ID: {en_india_speaker_id}) as base speaker for custom voice cloning")
+            except (KeyError, AttributeError) as e:
+                print(f"Warning: Could not get EN_INDIA speaker ID: {e}, using default speaker")
+                en_india_speaker_id = 0
+            
             self.melo_engine.synthesize_to_file(
                 text=clean_text,
                 output_path=temp_base,
-                speed=speed
+                speed=speed,
+                speaker_id=en_india_speaker_id
             )
             
-            # Extract voice embedding from reference audio
+            # Step 2: Extract voice embedding from reference audio
             target_embedding = self.voice_cloner.extract_voice_from_audio(
                 reference_audio_data, file_extension
             )
             
-            # Apply voice cloning
+            # Apply voice cloning with proper source embedding
             self.voice_cloner.clone_voice(temp_base, target_embedding, output_path)
             
             # Clean up temporary file
