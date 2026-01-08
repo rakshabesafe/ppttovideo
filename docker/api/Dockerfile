@@ -8,6 +8,8 @@ WORKDIR /
 RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
     git \
+    espeak-ng \
+    cmake \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy the requirements file into the container
@@ -18,6 +20,10 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 # Copy the application code into the container
 COPY ./app /app
+COPY ./neutts-air /neutts-air
+
+# Set PYTHONPATH
+ENV PYTHONPATH="${PYTHONPATH}:/neutts-air"
 
 # Copy templates directory
 COPY ./templates /templates

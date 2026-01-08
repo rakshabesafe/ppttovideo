@@ -13,6 +13,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     mecab \
     libmecab-dev \
     mecab-ipadic-utf8 \
+    espeak-ng \
+    cmake \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy requirements.txt first
@@ -44,8 +46,11 @@ RUN curl -L -o checkpoints_v2.zip "https://myshell-public-repo-host.s3.amazonaws
 # Copy application code
 COPY ./app /app
 
-# Set PYTHONPATH to include OpenVoice directory
-ENV PYTHONPATH="${PYTHONPATH}:/OpenVoice"
+# Copy NeuTTS Air code
+COPY ./neutts-air /neutts-air
+
+# Set PYTHONPATH to include OpenVoice and NeuTTS Air directories
+ENV PYTHONPATH="${PYTHONPATH}:/OpenVoice:/neutts-air"
 
 # Command to run the Celery worker for GPU tasks
 CMD ["celery", "-A", "app.workers.celery_app_gpu:app", "worker", "--loglevel=info", "-Q", "gpu_tasks", "-c", "1"]

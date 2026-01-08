@@ -182,7 +182,7 @@ docker exec ppt-api python -m app.cli.cleanup_jobs --stats
 ### Service Details
 - **`ppt-api`**: FastAPI web server and REST API endpoints
 - **`ppt-worker-cpu`**: Video processing and presentation decomposition  
-- **`ppt-worker-gpu`**: AI voice synthesis using OpenVoice V2 with modular TTS architecture
+- **`ppt-worker-gpu`**: AI voice synthesis using OpenVoice V2, Neuphonic, or Fish Speech with modular TTS architecture
 - **`ppt-libreoffice`**: PowerPoint to image conversion service
 - **`ppt-postgres`**: Database for users, jobs, and metadata
 - **`ppt-redis`**: Task queue and message broker
@@ -193,12 +193,39 @@ The TTS system uses a modular architecture for better maintainability and testin
 
 - **`TTSProcessor`**: High-level orchestrator for TTS operations
 - **`MeloTTSEngine`**: Base text-to-speech synthesis using MeloTTS
+- **`NeuphonicEngine`**: On-device TTS using NeuTTS Air
+- **`FishSpeechEngine`**: Cloud/API-based TTS using Fish Audio
 - **`OpenVoiceCloner`**: Voice cloning and tone color conversion
 - **`TextProcessor`**: Parsing of emotion tags and text preprocessing
 - **`AudioSynthesisService`**: Complete audio synthesis pipeline management
-- **Custom Exceptions**: `TTSException`, `MeloTTSException`, `OpenVoiceException` for precise error handling
+- **Custom Exceptions**: `TTSException`, `MeloTTSException`, `OpenVoiceException`, `NeuphonicException`, `FishSpeechException` for precise error handling
 
 ## 🔧 Configuration
+
+### TTS Engine Selection
+You can choose the Text-to-Speech engine by setting the `TTS_ENGINE` environment variable in your `.env` file:
+
+- **`melotts`** (Default): Uses MeloTTS for high-quality, efficient TTS. Supports native OpenVoice cloning.
+- **`neuphonic`**: Uses Neuphonic (NeuTTS Air) for ultra-realistic, low-latency, on-device TTS.
+- **`fishspeech`**: Uses Fish Speech (Fish Audio) API for SOTA TTS. Requires an API key.
+
+**Configuration Variables:**
+
+```bash
+# General TTS Selection
+TTS_ENGINE=melotts # Options: melotts, neuphonic, fishspeech
+
+# Neuphonic Configuration (for TTS_ENGINE='neuphonic')
+NEUPHONIC_BACKBONE_REPO=neuphonic/neutts-air
+NEUPHONIC_CODEC_REPO=neuphonic/neucodec
+NEUPHONIC_BACKBONE_DEVICE=cpu # or cuda
+NEUPHONIC_CODEC_DEVICE=cpu    # or cuda
+NEUPHONIC_REF_AUDIO=app/services/tts/data/default_ref.wav
+NEUPHONIC_REF_TEXT=app/services/tts/data/default_ref.txt
+
+# Fish Speech Configuration (for TTS_ENGINE='fishspeech')
+FISH_AUDIO_API_KEY=your_api_key_here
+```
 
 ### Port Mapping
 - **Main Application**: 18000
@@ -385,9 +412,13 @@ SELECT id, status, created_at FROM presentation_jobs ORDER BY created_at DESC;
 ### System Requirements
 - **OS**: Linux, macOS, or Windows with WSL2
 - **Memory**: 8GB RAM minimum, 16GB recommended  
-- **GPU**: NVIDIA GPU with CUDA (for voice synthesis)
+- **GPU**: NVIDIA GPU with CUDA (recommended for voice synthesis, especially for NeuTTS Air)
 - **Storage**: 50GB available space
 - **Network**: Internet access for AI model downloads
+- **Dependencies**:
+  - `espeak-ng` (required for Neuphonic/NeuTTS Air)
+  - `ffmpeg` (for video processing)
+  - Python 3.10+ (if running without Docker)
 
 ### File Requirements
 - **PowerPoint**: .pptx format only

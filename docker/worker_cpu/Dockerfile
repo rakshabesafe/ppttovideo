@@ -6,6 +6,8 @@ WORKDIR /
 RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
     git \
+    espeak-ng \
+    cmake \
     && rm -rf /var/lib/apt/lists/*
 
 COPY requirements.txt .
@@ -13,6 +15,10 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 COPY ./app /app
+COPY ./neutts-air /neutts-air
+
+# Set PYTHONPATH
+ENV PYTHONPATH="${PYTHONPATH}:/neutts-air"
 
 # Command to run the Celery worker
 # The queue 'cpu_tasks' will be for CPU-intensive tasks like video processing

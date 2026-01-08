@@ -41,6 +41,13 @@ GPU_COUNT=1
 NVIDIA_VISIBLE_DEVICES=all
 NVIDIA_DRIVER_CAPABILITIES=compute,utility
 
+# TTS Configuration
+TTS_ENGINE=melotts # or neuphonic, fishspeech
+
+# Neuphonic GPU Settings
+NEUPHONIC_BACKBONE_DEVICE=cuda
+NEUPHONIC_CODEC_DEVICE=cuda
+
 # TTS Timeout Configuration (optional)
 TTS_SOFT_TIME_LIMIT=300    # Soft timeout - triggers fallback audio (5 minutes)
 TTS_HARD_TIME_LIMIT=360    # Hard timeout - kills hung tasks (6 minutes)
