@@ -46,6 +46,11 @@ class TTSException(Exception):
     pass
 
 
+class NeuphonicException(TTSException):
+    """Exception specific to Neuphonic operations"""
+    pass
+
+
 class MeloTTSException(TTSException):
     """Exception specific to MeloTTS operations"""
     pass
@@ -231,6 +236,69 @@ class MeloTTSEngine:
         return self.tts_model is not None
 
 
+class NeuphonicEngine:
+    """Handles Neuphonic TTS synthesis"""
+
+    def __init__(self):
+        self.api_key = os.getenv("NEUPHONIC_API_KEY")
+        self.client = None
+
+    def initialize(self) -> None:
+        if self.client is not None:
+            return
+
+        if not self.api_key:
+             # Try to reload env var just in case
+             self.api_key = os.getenv("NEUPHONIC_API_KEY")
+             if not self.api_key:
+                 raise NeuphonicException("Neuphonic API key not found. Please set NEUPHONIC_API_KEY environment variable.")
+
+        try:
+            from pyneuphonic import Neuphonic
+            self.client = Neuphonic(api_key=self.api_key)
+            print("Neuphonic initialized successfully")
+        except Exception as e:
+            raise NeuphonicException(f"Neuphonic initialization failed: {e}")
+
+    def synthesize_to_file(self, text: str, output_path: str, speed: float = 1.0) -> str:
+        if self.client is None:
+            self.initialize()
+
+        try:
+            from pyneuphonic import TTSConfig
+
+            # Handle silence tag
+            if text == "[SILENCE]" or not text.strip():
+                # Create 1 second of silence
+                silence = torch.zeros(24000)  # 24kHz sample rate
+                sf.write(output_path, silence.numpy(), 24000)
+                return output_path
+
+            print(f"Synthesizing with Neuphonic: '{text[:50]}...'")
+
+            sse = self.client.tts.SSEClient()
+            tts_config = TTSConfig(speed=speed)
+
+            response = sse.send(text, tts_config=tts_config)
+
+            # Collect all audio chunks
+            all_audio = bytearray()
+            for item in response:
+                 if item.data.audio:
+                     all_audio.extend(item.data.audio)
+
+            with open(output_path, "wb") as f:
+                f.write(all_audio)
+
+            return output_path
+
+        except Exception as e:
+            raise NeuphonicException(f"Neuphonic synthesis failed: {e}")
+
+    def is_initialized(self) -> bool:
+        return self.client is not None
+
+
 class OpenVoiceCloner:
     """Handles voice cloning using OpenVoice"""
     
@@ -371,14 +439,20 @@ class TTSProcessor:
     
     def __init__(self, device: str = None):
         self.device = device or ("cuda:0" if torch.cuda.is_available() else "cpu")
+        self.engine_type = os.getenv("TTS_ENGINE", "melotts").lower()
         self.melo_engine = MeloTTSEngine(device=self.device)
         self.voice_cloner = OpenVoiceCloner(device=self.device)
+        self.neuphonic_engine = NeuphonicEngine()
         self.text_processor = TextProcessor()
+        print(f"TTS Processor initialized with engine: {self.engine_type}")
         
     def initialize(self) -> None:
-        """Initialize both MeloTTS and OpenVoice components"""
-        self.melo_engine.initialize()
-        self.voice_cloner.initialize()
+        """Initialize the selected TTS engine components"""
+        if self.engine_type == "neuphonic":
+            self.neuphonic_engine.initialize()
+        else:
+            self.melo_engine.initialize()
+            self.voice_cloner.initialize()
         
     def synthesize_with_builtin_voice(self, text: str, speaker_name: str, 
                                      output_path: str) -> str:
@@ -397,6 +471,13 @@ class TTSProcessor:
             # Parse text tags
             clean_text, emotion, speed, pitch = self.text_processor.parse_note_text_tags(text)
             
+            if self.engine_type == "neuphonic":
+                return self.neuphonic_engine.synthesize_to_file(
+                    text=clean_text,
+                    output_path=output_path,
+                    speed=speed
+                )
+
             # Map speaker names to MeloTTS speakers
             melotts_speakers = {
                 'en-default': 'EN-Default',
@@ -464,6 +545,15 @@ class TTSProcessor:
             # Parse text tags
             clean_text, emotion, speed, pitch = self.text_processor.parse_note_text_tags(text)
             
+            if self.engine_type == "neuphonic":
+                 # Neuphonic does support voice cloning, but the implementation is different.
+                 # For now, we'll raise an error or fallback.
+                 # Given the requirement "based on configuration user should be able to use different engine",
+                 # I will assume users wanting cloning will use OpenVoice or we'd need to implement Neuphonic cloning.
+                 # Let's log a warning and fallback or raise. The prompt didn't specify Neuphonic cloning.
+                 # However, to avoid breaking if someone calls this, I'll raise a clear exception.
+                 raise NotImplementedError("Custom voice synthesis not yet implemented for Neuphonic engine")
+
             # Step 3: Generate base TTS audio using MeloTTS EN_INDIA speaker
             # Following OpenVoice recommendation to use English Indian as base speaker
             temp_base = f"temp_base_{int(time.time())}.wav"
@@ -520,6 +610,13 @@ class TTSProcessor:
             clean_text, emotion, speed_parsed, pitch = self.text_processor.parse_note_text_tags(text)
             actual_speed = speed_parsed if speed_parsed != 1.0 else speed
             
+            if self.engine_type == "neuphonic":
+                return self.neuphonic_engine.synthesize_to_file(
+                    text=clean_text,
+                    output_path=output_path,
+                    speed=actual_speed
+                )
+
             return self.melo_engine.synthesize_to_file(
                 text=clean_text,
                 output_path=output_path,
@@ -549,4 +646,6 @@ class TTSProcessor:
     
     def is_ready(self) -> bool:
         """Check if both engines are ready"""
+        if self.engine_type == "neuphonic":
+            return self.neuphonic_engine.is_initialized()
         return self.melo_engine.is_initialized() and self.voice_cloner.is_initialized()
