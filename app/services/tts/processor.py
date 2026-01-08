@@ -9,9 +9,10 @@ from .text_processing import TextProcessor
 from .melo import MeloTTSEngine
 from .openvoice import OpenVoiceCloner
 from .neuphonic import NeuphonicEngine
+from .fishspeech import FishSpeechEngine
 
 class TTSProcessor:
-    """High-level TTS processor that orchestrates MeloTTS, OpenVoice, and Neuphonic"""
+    """High-level TTS processor that orchestrates MeloTTS, OpenVoice, Neuphonic, and Fish Speech"""
 
     def __init__(self, device: str = None):
         self.device = device or ("cuda:0" if torch.cuda.is_available() else "cpu")
@@ -19,6 +20,7 @@ class TTSProcessor:
         self.melo_engine = MeloTTSEngine(device=self.device)
         self.voice_cloner = OpenVoiceCloner(device=self.device)
         self.neuphonic_engine = NeuphonicEngine()
+        self.fish_engine = FishSpeechEngine()
         self.text_processor = TextProcessor()
         print(f"TTS Processor initialized with engine: {self.engine_type}")
 
@@ -26,6 +28,8 @@ class TTSProcessor:
         """Initialize the selected TTS engine components"""
         if self.engine_type == "neuphonic":
             self.neuphonic_engine.initialize()
+        elif self.engine_type == "fishspeech":
+            self.fish_engine.initialize()
         else:
             self.melo_engine.initialize()
             self.voice_cloner.initialize()
@@ -49,6 +53,13 @@ class TTSProcessor:
 
             if self.engine_type == "neuphonic":
                 return self.neuphonic_engine.synthesize_to_file(
+                    text=clean_text,
+                    output_path=output_path,
+                    speed=speed
+                )
+
+            if self.engine_type == "fishspeech":
+                return self.fish_engine.synthesize_to_file(
                     text=clean_text,
                     output_path=output_path,
                     speed=speed
@@ -130,6 +141,9 @@ class TTSProcessor:
                  # However, to avoid breaking if someone calls this, I'll raise a clear exception.
                  raise NotImplementedError("Custom voice synthesis not yet implemented for Neuphonic engine")
 
+            if self.engine_type == "fishspeech":
+                 raise NotImplementedError("Custom voice synthesis not yet implemented for Fish Speech engine")
+
             # Step 3: Generate base TTS audio using MeloTTS EN_INDIA speaker
             # Following OpenVoice recommendation to use English Indian as base speaker
             temp_base = f"temp_base_{int(time.time())}.wav"
@@ -193,6 +207,13 @@ class TTSProcessor:
                     speed=actual_speed
                 )
 
+            if self.engine_type == "fishspeech":
+                return self.fish_engine.synthesize_to_file(
+                    text=clean_text,
+                    output_path=output_path,
+                    speed=actual_speed
+                )
+
             return self.melo_engine.synthesize_to_file(
                 text=clean_text,
                 output_path=output_path,
@@ -224,4 +245,6 @@ class TTSProcessor:
         """Check if both engines are ready"""
         if self.engine_type == "neuphonic":
             return self.neuphonic_engine.is_initialized()
+        if self.engine_type == "fishspeech":
+            return self.fish_engine.is_initialized()
         return self.melo_engine.is_initialized() and self.voice_cloner.is_initialized()

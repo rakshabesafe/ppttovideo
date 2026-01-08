@@ -37,3 +37,4 @@ Flask
 jinja2
 llama-cpp-python
 espeak-ng
+fish-audio-sdk

@@ -23,8 +23,8 @@ sys.path.append('/OpenVoice')
 sys.path.append('/src/melotts')
 
 from app.services.tts_service import (
-    TextProcessor, MeloTTSEngine, OpenVoiceCloner, TTSProcessor,
-    TTSException, MeloTTSException, OpenVoiceException
+    TextProcessor, MeloTTSEngine, OpenVoiceCloner, TTSProcessor, FishSpeechEngine,
+    TTSException, MeloTTSException, OpenVoiceException, FishSpeechException
 )
 
 
@@ -282,10 +282,18 @@ class TestTTSProcessor(unittest.TestCase):
     @patch.object(OpenVoiceCloner, 'initialize')
     def test_initialization(self, mock_voice_init, mock_melo_init):
         """Test TTS processor initialization"""
+        # Default engine is melotts
         self.processor.initialize()
         
         mock_melo_init.assert_called_once()
         mock_voice_init.assert_called_once()
+
+    @patch.object(FishSpeechEngine, 'initialize')
+    def test_initialization_fish(self, mock_fish_init):
+        """Test TTS processor initialization with fishspeech"""
+        self.processor.engine_type = "fishspeech"
+        self.processor.initialize()
+        mock_fish_init.assert_called_once()
     
     @patch.object(MeloTTSEngine, 'synthesize_to_file')
     @patch.object(OpenVoiceCloner, 'load_builtin_voice')
@@ -332,6 +340,21 @@ class TestTTSProcessor(unittest.TestCase):
         mock_synthesize.assert_called_once_with(
             text="Hello",
             output_path="output.wav", 
+            speed=1.2
+        )
+
+    @patch.object(FishSpeechEngine, 'synthesize_to_file')
+    def test_synthesize_base_only_fish(self, mock_synthesize):
+        """Test synthesis without voice cloning (Fish Speech)"""
+        self.processor.engine_type = "fishspeech"
+        mock_synthesize.return_value = "output.wav"
+
+        result = self.processor.synthesize_base_only("Hello", "output.wav", speed=1.2)
+
+        self.assertEqual(result, "output.wav")
+        mock_synthesize.assert_called_once_with(
+            text="Hello",
+            output_path="output.wav",
             speed=1.2
         )
     

@@ -16,3 +16,8 @@ class OpenVoiceException(TTSException):
 class NeuphonicException(TTSException):
     """Exception specific to Neuphonic operations"""
     pass
+
+
+class FishSpeechException(TTSException):
+    """Exception specific to Fish Speech operations"""
+    pass
