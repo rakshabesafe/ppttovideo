@@ -35,4 +35,5 @@ pydantic-settings
 python-multipart
 Flask
 jinja2
-pyneuphonic
+llama-cpp-python
+espeak-ng

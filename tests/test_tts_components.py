@@ -142,6 +142,11 @@ class TestMeloTTSEngine(unittest.TestCase):
         """Test synthesis of silence tag"""
         mock_zeros.return_value = Mock()
         
+        # Configure TTS mock
+        mock_instance = Mock()
+        mock_instance.hps.data.spk2id = {'EN-US': 0}
+        mock_tts.return_value = mock_instance
+
         with tempfile.NamedTemporaryFile(suffix='.wav', delete=False) as tmp:
             output_path = tmp.name
         
