@@ -16,9 +16,13 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 COPY ./app /app
 COPY ./neutts-air /neutts-air
+RUN pip install -r /neutts-air/requirements.txt
+
+COPY ./fish-speech /fish-speech
+RUN pip install /fish-speech
 
 # Set PYTHONPATH
-ENV PYTHONPATH="${PYTHONPATH}:/neutts-air"
+ENV PYTHONPATH="${PYTHONPATH}:/neutts-air:/fish-speech"
 
 # Command to run the Celery worker
 # The queue 'cpu_tasks' will be for CPU-intensive tasks like video processing

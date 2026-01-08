@@ -21,9 +21,13 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Copy the application code into the container
 COPY ./app /app
 COPY ./neutts-air /neutts-air
+RUN pip install -r /neutts-air/requirements.txt
+
+COPY ./fish-speech /fish-speech
+RUN pip install /fish-speech
 
 # Set PYTHONPATH
-ENV PYTHONPATH="${PYTHONPATH}:/neutts-air"
+ENV PYTHONPATH="${PYTHONPATH}:/neutts-air:/fish-speech"
 
 # Copy templates directory
 COPY ./templates /templates

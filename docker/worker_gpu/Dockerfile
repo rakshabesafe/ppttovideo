@@ -48,9 +48,14 @@ COPY ./app /app
 
 # Copy NeuTTS Air code
 COPY ./neutts-air /neutts-air
+RUN pip install -r /neutts-air/requirements.txt
 
-# Set PYTHONPATH to include OpenVoice and NeuTTS Air directories
-ENV PYTHONPATH="${PYTHONPATH}:/OpenVoice:/neutts-air"
+# Copy Fish Speech code
+COPY ./fish-speech /fish-speech
+RUN pip install /fish-speech
+
+# Set PYTHONPATH to include OpenVoice, NeuTTS Air and Fish Speech directories
+ENV PYTHONPATH="${PYTHONPATH}:/OpenVoice:/neutts-air:/fish-speech"
 
 # Command to run the Celery worker for GPU tasks
 CMD ["celery", "-A", "app.workers.celery_app_gpu:app", "worker", "--loglevel=info", "-Q", "gpu_tasks", "-c", "1"]

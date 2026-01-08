@@ -224,8 +224,15 @@ NEUPHONIC_REF_AUDIO=app/services/tts/data/default_ref.wav
 NEUPHONIC_REF_TEXT=app/services/tts/data/default_ref.txt
 
 # Fish Speech Configuration (for TTS_ENGINE='fishspeech')
-FISH_AUDIO_API_KEY=your_api_key_here
+FISH_SPEECH_CHECKPOINT_PATH=checkpoints/openaudio-s1-mini
+FISH_SPEECH_DEVICE=cuda
 ```
+
+**Note for Fish Speech / OpenAudio S1 Mini:**
+The OpenAudio S1 Mini model is gated on Hugging Face. You must download it manually or provide a Hugging Face token.
+1.  Download the model from [fishaudio/openaudio-s1-mini](https://huggingface.co/fishaudio/openaudio-s1-mini).
+2.  Place the model files in `checkpoints/openaudio-s1-mini` directory in the project root (or update `FISH_SPEECH_CHECKPOINT_PATH`).
+3.  Ensure `codec.pth` is also present in that directory (downloaded with the model).
 
 ### Port Mapping
 - **Main Application**: 18000

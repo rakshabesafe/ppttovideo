@@ -37,4 +37,8 @@ Flask
 jinja2
 llama-cpp-python
 espeak-ng
-fish-audio-sdk
+hydra-core
+transformers
+torch
+numpy
+# fish-speech and dependencies are handled via repo/docker
