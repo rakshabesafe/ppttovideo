@@ -1,34 +1,46 @@
-# Base image for GPU worker with PyTorch and CUDA pre-installed
+# Base image for GPU worker with PyTorch, CUDA, and all dependencies pre-installed
 FROM pytorch/pytorch:2.1.0-cuda12.1-cudnn8-runtime
 
 WORKDIR /
 
-# Install system dependencies
+# Install system dependencies including MeCab for MeloTTS
 RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
     libsndfile1 \
     git \
     curl \
     unzip \
+    mecab \
+    libmecab-dev \
+    mecab-ipadic-utf8 \
     && rm -rf /var/lib/apt/lists/*
 
-# Pre-install heavy dependencies to create cached layer
+# Copy and install Python dependencies
 COPY requirements.txt .
-RUN pip install --no-cache-dir \
-    torch torchvision torchaudio \
-    librosa webrtcvad-wheels soundfile \
-    celery redis
+RUN pip install --no-cache-dir -r requirements.txt
 
-# Install OpenVoice and MeloTTS (heavy downloads)
-RUN git clone https://github.com/myshell-ai/OpenVoice.git /app/OpenVoice
-RUN pip install --no-cache-dir -e git+https://github.com/myshell-ai/MeloTTS.git#egg=MeloTTS
+# Install unidic dictionary for MeloTTS/MeCab
 RUN python -m unidic download
-RUN cd /app/OpenVoice && pip install -e .
 
-# Download OpenVoice checkpoints once
+# Download required NLTK data for MeloTTS
+RUN python -c "import nltk; nltk.download('averaged_perceptron_tagger_eng'); nltk.download('averaged_perceptron_tagger'); nltk.download('cmudict')"
+
+# Pre-download BERT model for MeloTTS to prevent runtime hanging
+RUN python -c "from transformers import BertTokenizer, BertModel; BertTokenizer.from_pretrained('bert-base-uncased'); BertModel.from_pretrained('bert-base-uncased'); print('BERT model cached successfully')"
+
+# Install OpenVoice and its dependencies
+RUN git clone https://github.com/myshell-ai/OpenVoice.git /OpenVoice && \
+    cd /OpenVoice && \
+    pip install -e . && \
+    python -c "import openvoice; print('OpenVoice installed successfully')"
+
+# Download and extract OpenVoice V2 checkpoints
 RUN curl -L -o checkpoints_v2.zip "https://myshell-public-repo-host.s3.amazonaws.com/openvoice/checkpoints_v2_0417.zip" && \
     unzip checkpoints_v2.zip -d checkpoints_v2 && \
     rm checkpoints_v2.zip
+
+# Set PYTHONPATH to include OpenVoice directory
+ENV PYTHONPATH="${PYTHONPATH}:/OpenVoice"
 
 # This base image contains all heavy dependencies
 # Total size: ~8-10GB but built once and reused

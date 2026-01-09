@@ -1,17 +1,13 @@
-FROM python:3.11-slim
+# This Dockerfile assumes you have already built the base image:
+# docker build -t ppttovideo-cpu-base:latest -f docker/base-images/Dockerfile.cpu-base .
 
+# Use the pre-built CPU base image
+FROM ppttovideo-cpu-base:latest
+
+# Set the working directory
 WORKDIR /
 
-# Install system dependencies
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    build-essential \
-    git \
-    && rm -rf /var/lib/apt/lists/*
-
-COPY requirements.txt .
-
-RUN pip install --no-cache-dir -r requirements.txt
-
+# Copy the application code into the container
 COPY ./app /app
 
 # Command to run the Celery worker
