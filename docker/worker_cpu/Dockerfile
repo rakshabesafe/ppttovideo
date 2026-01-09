@@ -1,5 +1,8 @@
-FROM python:3.11-slim
+# This Dockerfile assumes you have already built the base image:
+# docker build -t ppttovideo-cpu-base:latest -f docker/base-images/Dockerfile.cpu-base .
 
+# Use the pre-built CPU base image
+FROM ppttovideo-cpu-base:latest
 WORKDIR /
 
 # Install system dependencies
@@ -10,10 +13,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     cmake \
     && rm -rf /var/lib/apt/lists/*
 
-COPY requirements.txt .
+# Set the working directory
+WORKDIR /
 
-RUN pip install --no-cache-dir -r requirements.txt
-
+# Copy the application code into the container
 COPY ./app /app
 COPY ./neutts-air /neutts-air
 RUN pip install -r /neutts-air/requirements.txt

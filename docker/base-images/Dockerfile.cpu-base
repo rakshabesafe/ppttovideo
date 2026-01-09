@@ -1,3 +1,7 @@
+# This Dockerfile creates a base image with all CPU-related dependencies pre-installed.
+# Build this image first with:
+# docker build -t ppttovideo-cpu-base:latest -f docker/base-images/Dockerfile.cpu-base .
+
 # Base image for CPU worker with all dependencies pre-installed
 FROM python:3.11-slim
 
@@ -12,6 +16,3 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # Copy and install Python dependencies
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
-
-# This base image will be reused for actual CPU worker
-# Total size: ~3-4GB but only built once

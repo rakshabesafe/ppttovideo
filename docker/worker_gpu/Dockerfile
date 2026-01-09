@@ -1,6 +1,8 @@
-# Use a base image with CUDA and PyTorch pre-installed
-FROM pytorch/pytorch:2.1.0-cuda12.1-cudnn8-runtime
+# This Dockerfile assumes you have already built the base image:
+# docker build -t ppttovideo-gpu-base:latest -f docker/base-images/Dockerfile.gpu-base .
 
+# Use the pre-built GPU base image
+FROM ppttovideo-gpu-base:latest
 WORKDIR /
 
 # Install system dependencies including MeCab for MeloTTS
@@ -28,22 +30,10 @@ RUN python -m unidic download
 # Download required NLTK data for MeloTTS
 RUN python -c "import nltk; nltk.download('averaged_perceptron_tagger_eng'); nltk.download('averaged_perceptron_tagger'); nltk.download('cmudict')"
 
-# Pre-download BERT model for MeloTTS to prevent runtime hanging
-RUN python -c "from transformers import BertTokenizer, BertModel; BertTokenizer.from_pretrained('bert-base-uncased'); BertModel.from_pretrained('bert-base-uncased'); print('BERT model cached successfully')"
+# Set the working directory
+WORKDIR /
 
-# Install OpenVoice and its dependencies  
-RUN git clone https://github.com/myshell-ai/OpenVoice.git /OpenVoice && \
-    cd /OpenVoice && \
-    ls -la && \
-    pip install -e . && \
-    python -c "import openvoice; print('OpenVoice installed successfully')"
-
-# Download and extract OpenVoice V2 checkpoints
-RUN curl -L -o checkpoints_v2.zip "https://myshell-public-repo-host.s3.amazonaws.com/openvoice/checkpoints_v2_0417.zip" && \
-    unzip checkpoints_v2.zip -d checkpoints_v2 && \
-    rm checkpoints_v2.zip
-
-# Copy application code
+# Copy the application code into the container
 COPY ./app /app
 
 # Copy NeuTTS Air code
