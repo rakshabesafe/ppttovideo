@@ -21,3 +21,8 @@ class NeuphonicException(TTSException):
 class FishSpeechException(TTSException):
     """Exception specific to Fish Speech operations"""
     pass
+
+
+class ChatterboxException(TTSException):
+    """Exception specific to Chatterbox operations"""
+    pass

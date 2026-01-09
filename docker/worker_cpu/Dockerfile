@@ -21,8 +21,11 @@ RUN pip install -r /neutts-air/requirements.txt
 COPY ./fish-speech /fish-speech
 RUN pip install /fish-speech
 
+COPY ./chatterbox /chatterbox
+RUN pip install /chatterbox
+
 # Set PYTHONPATH
-ENV PYTHONPATH="${PYTHONPATH}:/neutts-air:/fish-speech"
+ENV PYTHONPATH="${PYTHONPATH}:/neutts-air:/fish-speech:/chatterbox"
 
 # Command to run the Celery worker
 # The queue 'cpu_tasks' will be for CPU-intensive tasks like video processing

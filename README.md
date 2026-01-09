@@ -207,13 +207,18 @@ You can choose the Text-to-Speech engine by setting the `TTS_ENGINE` environment
 
 - **`melotts`** (Default): Uses MeloTTS for high-quality, efficient TTS. Supports native OpenVoice cloning.
 - **`neuphonic`**: Uses Neuphonic (NeuTTS Air) for ultra-realistic, low-latency, on-device TTS.
-- **`fishspeech`**: Uses Fish Speech (Fish Audio) API for SOTA TTS. Requires an API key.
+- **`fishspeech`**: Uses Fish Speech (Fish Audio) S1 for SOTA TTS.
+- **`chatterbox`**: Uses Chatterbox-Turbo for ultra-fast, high-quality TTS.
 
 **Configuration Variables:**
 
 ```bash
 # General TTS Selection
-TTS_ENGINE=melotts # Options: melotts, neuphonic, fishspeech
+TTS_ENGINE=melotts # Options: melotts, neuphonic, fishspeech, chatterbox
+
+# Chatterbox Configuration (for TTS_ENGINE='chatterbox')
+CHATTERBOX_REF_AUDIO=app/services/tts/data/default_ref.wav
+CHATTERBOX_DEVICE=cuda
 
 # Neuphonic Configuration (for TTS_ENGINE='neuphonic')
 NEUPHONIC_BACKBONE_REPO=neuphonic/neutts-air

@@ -54,8 +54,12 @@ RUN pip install -r /neutts-air/requirements.txt
 COPY ./fish-speech /fish-speech
 RUN pip install /fish-speech
 
-# Set PYTHONPATH to include OpenVoice, NeuTTS Air and Fish Speech directories
-ENV PYTHONPATH="${PYTHONPATH}:/OpenVoice:/neutts-air:/fish-speech"
+# Copy Chatterbox code (patched)
+COPY ./chatterbox /chatterbox
+RUN pip install /chatterbox
+
+# Set PYTHONPATH to include OpenVoice, NeuTTS Air, Fish Speech and Chatterbox directories
+ENV PYTHONPATH="${PYTHONPATH}:/OpenVoice:/neutts-air:/fish-speech:/chatterbox"
 
 # Command to run the Celery worker for GPU tasks
 CMD ["celery", "-A", "app.workers.celery_app_gpu:app", "worker", "--loglevel=info", "-Q", "gpu_tasks", "-c", "1"]

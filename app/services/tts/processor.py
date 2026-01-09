@@ -10,9 +10,10 @@ from .melo import MeloTTSEngine
 from .openvoice import OpenVoiceCloner
 from .neuphonic import NeuphonicEngine
 from .fishspeech import FishSpeechEngine
+from .chatterbox import ChatterboxEngine
 
 class TTSProcessor:
-    """High-level TTS processor that orchestrates MeloTTS, OpenVoice, Neuphonic, and Fish Speech"""
+    """High-level TTS processor that orchestrates MeloTTS, OpenVoice, Neuphonic, Fish Speech and Chatterbox"""
 
     def __init__(self, device: str = None):
         self.device = device or ("cuda:0" if torch.cuda.is_available() else "cpu")
@@ -21,6 +22,7 @@ class TTSProcessor:
         self.voice_cloner = OpenVoiceCloner(device=self.device)
         self.neuphonic_engine = NeuphonicEngine()
         self.fish_engine = FishSpeechEngine()
+        self.chatterbox_engine = ChatterboxEngine()
         self.text_processor = TextProcessor()
         print(f"TTS Processor initialized with engine: {self.engine_type}")
 
@@ -30,6 +32,8 @@ class TTSProcessor:
             self.neuphonic_engine.initialize()
         elif self.engine_type == "fishspeech":
             self.fish_engine.initialize()
+        elif self.engine_type == "chatterbox":
+            self.chatterbox_engine.initialize()
         else:
             self.melo_engine.initialize()
             self.voice_cloner.initialize()
@@ -60,6 +64,13 @@ class TTSProcessor:
 
             if self.engine_type == "fishspeech":
                 return self.fish_engine.synthesize_to_file(
+                    text=clean_text,
+                    output_path=output_path,
+                    speed=speed
+                )
+
+            if self.engine_type == "chatterbox":
+                return self.chatterbox_engine.synthesize_to_file(
                     text=clean_text,
                     output_path=output_path,
                     speed=speed
@@ -144,6 +155,9 @@ class TTSProcessor:
             if self.engine_type == "fishspeech":
                  raise NotImplementedError("Custom voice synthesis not yet implemented for Fish Speech engine")
 
+            if self.engine_type == "chatterbox":
+                 raise NotImplementedError("Custom voice synthesis not yet implemented for Chatterbox engine")
+
             # Step 3: Generate base TTS audio using MeloTTS EN_INDIA speaker
             # Following OpenVoice recommendation to use English Indian as base speaker
             temp_base = f"temp_base_{int(time.time())}.wav"
@@ -214,6 +228,13 @@ class TTSProcessor:
                     speed=actual_speed
                 )
 
+            if self.engine_type == "chatterbox":
+                return self.chatterbox_engine.synthesize_to_file(
+                    text=clean_text,
+                    output_path=output_path,
+                    speed=actual_speed
+                )
+
             return self.melo_engine.synthesize_to_file(
                 text=clean_text,
                 output_path=output_path,
@@ -247,4 +268,6 @@ class TTSProcessor:
             return self.neuphonic_engine.is_initialized()
         if self.engine_type == "fishspeech":
             return self.fish_engine.is_initialized()
+        if self.engine_type == "chatterbox":
+            return self.chatterbox_engine.is_initialized()
         return self.melo_engine.is_initialized() and self.voice_cloner.is_initialized()

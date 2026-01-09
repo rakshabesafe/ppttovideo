@@ -42,7 +42,10 @@ NVIDIA_VISIBLE_DEVICES=all
 NVIDIA_DRIVER_CAPABILITIES=compute,utility
 
 # TTS Configuration
-TTS_ENGINE=melotts # or neuphonic, fishspeech
+TTS_ENGINE=melotts # or neuphonic, fishspeech, chatterbox
+
+# Chatterbox GPU Settings
+CHATTERBOX_DEVICE=cuda
 
 # Neuphonic GPU Settings
 NEUPHONIC_BACKBONE_DEVICE=cuda
