@@ -34,7 +34,7 @@ class FishSpeechEngine:
 
             # Import here to avoid issues if not available during class definition
             try:
-                from fish_speech.models.text2semantic.inference import init_model as init_llm
+                from fish_speech.models.text2semantic.inference import load_model as load_llm
                 from fish_speech.models.vqgan.inference import load_model as load_codec
             except ImportError as e:
                 # Fallback check for older structure if needed, or raise
@@ -44,7 +44,7 @@ class FishSpeechEngine:
             precision = torch.half if self.device == "cuda" else torch.float32
 
             # Checkpoint path for LLM is usually the dir containing config.json
-            self.llm_model, self.decode_one_token = init_llm(
+            self.llm_model, self.decode_one_token = load_llm(
                 Path(self.checkpoint_path),
                 self.device,
                 precision,
